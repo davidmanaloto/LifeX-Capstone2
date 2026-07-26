@@ -45,3 +45,6 @@
    MEDPLUM_BASE_URL=http://localhost:8103/
 Connects the frontend to the container
 
+## File Structure and Navigation
+
+- **Provider App: ** the EHR interface built for doctors/nurses to view patients charts, document encounters and manage clinical task. 
