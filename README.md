@@ -43,7 +43,8 @@
 - **Change the:** .env.defaults to .env and modify
    ```bash
    MEDPLUM_BASE_URL=http://localhost:8103/
-Connects the frontend to the container
+   
+`Connects the frontend to the container`
 
 ## File Structure and Navigation
 
