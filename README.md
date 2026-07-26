@@ -112,3 +112,9 @@ LIFEX-CAPSTONE/
 │
 ├── docker-compose.yml                     # Local backend or container orchestration
 └── README.md                              # Repository root documentation
+```
+## Medplum's Portal and Provider local host URL config
+
+- **Admin Interface:** localhost:3000/
+- **Provider Interface:** localhost:3001/ or what your system provides
+- **Note that "Provider" expects the following:** localhost3001/signin?project=<project-ID>
