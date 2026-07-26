@@ -113,6 +113,7 @@ LIFEX-CAPSTONE/
 ├── docker-compose.yml                     # Local backend or container orchestration
 └── README.md                              # Repository root documentation
 ```
+</details>
 ## Medplum's Portal and Provider local host URL config
 
 - **Admin Interface:** localhost:3000/
