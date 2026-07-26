@@ -47,6 +47,4 @@ Connects the frontend to the container
 
 ## File Structure and Navigation
 
-- **Provider App:**
-   ```bash
-   the EHR interface built for doctors/nurses to view patients charts, document encounters and manage clinical task. 
+- **Provider App:** the EHR interface built for doctors/nurses to view patients charts, document encounters and manage clinical task. 
