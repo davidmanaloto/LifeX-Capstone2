@@ -25,8 +25,8 @@
 
 ## Default Admin Credentials
 
-- **Email:** admin@example.com
-- **Password:** medplum_admin
+- **Email:** `admin@example.com`
+- **Password:** `medplum_admin`
 
 ## Running Patient Portal and Provider App
 
