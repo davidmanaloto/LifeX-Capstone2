@@ -28,4 +28,20 @@
 - **Email:** admin@example.com
 - **Password:** medplum_admin
 
-Feel free to explore! (To be updated later)
+## Running Patient Portal and Provider App
+
+1. On both directories:
+   ```bash
+   npm install
+2. Run:
+   ```bash
+   npm run dev
+
+## Initializing connections
+
+1. On both directories:
+   - **Change the:** .env.defaults to .env and modify
+   ```bash
+   MEDPLUM_BASE_URL=http://localhost:8103/
+Connects the frontend to the container
+
