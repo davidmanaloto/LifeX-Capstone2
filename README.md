@@ -7,8 +7,8 @@
 
 1. Create and navigate to your project directory:
    ```bash
-   mkdir `<folder-name>`
-   cd `<folder-name>`
+   mkdir <folder-name>
+   cd <folder-name>
 2. Clone repository:
    ```bash
    git clone <repository-url>
@@ -43,7 +43,7 @@
 - **Change the:** .env.defaults to .env and modify
    ```bash
    MEDPLUM_BASE_URL=http://localhost:8103/
-
+   
 `Connects the frontend to the container`
 
 ## File Structure and Navigation
