@@ -55,7 +55,7 @@ Connects the frontend to the container
 ```markdown
 <details>
 <summary>📂 <b>Click to expand Project Directory Tree</b></summary>
-
+</details>
 ```text
 LIFEX-CAPSTONE/
 ├── 📁 lifex-patient-portal/               # 🧑‍🤝‍🧑 PATIENT PORTAL (Vite + React + Medplum)
