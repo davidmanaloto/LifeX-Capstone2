@@ -1,5 +1,3 @@
-readme_content = """# Medplum Setup Guide
-
 ## Prerequisites
 
 - **Windows:** [Docker Desktop](https://www.docker.com/products/docker-desktop/)
@@ -18,5 +16,16 @@ readme_content = """# Medplum Setup Guide
 ## Running Medplum
 
 - **On a terminal**
+1. Run container:
+   ```bash
+   docker compose up -d
+2. Stop container:
+   ```bash
+   docker compose down
 
-- **Run container**
+## Default Admin Credentials
+
+- **Email:** admin@example.com
+- **Password:** medplum_admin
+
+Feel free to explore! (To be updated later)
