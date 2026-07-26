@@ -125,4 +125,4 @@ LIFEX-CAPSTONE/
 - **Provider Interface:** `localhost:3001/ or what your system provides`
 - **Note that "Provider" expects the following:** `localhost:3001/signin?project=<project-ID>`
 
-`To be continued with Patient Portal exploration`
+`To be expanded more after Patient Portal exploration`
