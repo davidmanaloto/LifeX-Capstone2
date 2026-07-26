@@ -1,3 +1,6 @@
+## Medplum documentation and guide
+- **Welcome to Medplum** [Medplum Docs](https://www.medplum.com/docs)
+
 ## Prerequisites
 
 - **Windows:** [Docker Desktop](https://www.docker.com/products/docker-desktop/)
