@@ -43,7 +43,7 @@
 ## Initializing connections
 
 1. On both directories:
-- **Change the:** .env.defaults to .env and modify
+- **Change the:** `.env.defaults` to `.env` and modify
    ```bash
    MEDPLUM_BASE_URL=http://localhost:8103/
    
