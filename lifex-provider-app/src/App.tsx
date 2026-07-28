@@ -13,6 +13,7 @@ import {
   IconPrinter,
   IconQrcode,
   IconSettingsAutomation,
+  IconShieldLock,
   IconUserPlus,
   IconUsers,
 } from '@tabler/icons-react';
@@ -21,12 +22,14 @@ import { Suspense, useState } from 'react';
 import { Navigate, Route, Routes, useLocation, useSearchParams } from 'react-router';
 import { TaskDetailsModal } from './components/tasks/TaskDetailsModal';
 import { hasScriptSureIdentifier } from './components/utils';
+import { useAdminAccess } from './hooks/useAdminAccess';
 import { useDoseSpotAccess } from './hooks/useDoseSpotAccess';
 import './index.css';
 
 const SETUP_DISMISSED_KEY = 'medplum-provider-setup-completed';
 const PROVIDER_HIDE_GET_STARTED_SETTING = 'hideGetStarted';
 
+import { AdminDashboard } from './pages/AdminDashboard';
 import { EncounterChartPage } from './pages/encounter/EncounterChartPage';
 import { EncounterModal } from './pages/encounter/EncounterModal';
 import { FaxPage } from './pages/fax/FaxPage';
@@ -79,6 +82,7 @@ export function App(): JSX.Element | null {
   );
   const setupDismissed = setupDisabledByProject || setupDismissedByUser;
   const { hasAccess: hasDoseSpot } = useDoseSpotAccess();
+  const isAdmin = useAdminAccess();
   const membership = medplum.getProjectMembership();
   const hasScriptSure = hasScriptSureIdentifier(membership);
 
@@ -132,6 +136,15 @@ export function App(): JSX.Element | null {
                     },
                   },
                   { icon: <IconPrinter />, label: 'Faxes', href: '/Fax/Communication' },
+                  ...(isAdmin
+                    ? [
+                        {
+                          icon: <IconShieldLock />,
+                          label: 'Admin',
+                          href: '/admin',
+                        },
+                      ]
+                    : []),
                 ],
               },
               {
@@ -183,6 +196,7 @@ export function App(): JSX.Element | null {
           {profile ? (
             <>
               <Route path="/getstarted" element={<GetStartedPage />} />
+              <Route path="/admin" element={<AdminDashboard />} />
               <Route path="/Spaces/Communication" element={<SpacesPage />}>
                 <Route index element={<SpacesPage />} />
                 <Route path=":topicId" element={<SpacesPage />} />
