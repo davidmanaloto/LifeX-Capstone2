@@ -1,0 +1,279 @@
+import { useState, useEffect } from 'react';
+import type { JSX } from 'react';
+import { useMedplum, ResourceForm } from '@medplum/react';
+import { useNavigate } from 'react-router';
+import type { CodeableConcept, PractitionerRole, ProjectMembership } from '@medplum/fhirtypes';
+import {
+  Container,
+  Title,
+  Text,
+  TextInput,
+  Checkbox,
+  Button,
+  Stack,
+  Alert,
+  Group,
+  Select,
+  MultiSelect,
+  Textarea,
+  Card,
+  List,
+} from '@mantine/core';
+import { useAdminAccess } from '../../hooks/useAdminAccess';
+import { useOrganizations } from '../../hooks/useOrganizations';
+import { ROLE_OPTIONS, ROLES_WITH_SPECIALTY, buildRoleCodes, roleLabel, type RoleValue } from '../../utils/practitionerRoles';
+
+type Step = 'user' | 'role' | 'details' | 'review';
+
+export function NewUserPage(): JSX.Element {
+  const medplum = useMedplum();
+  const navigate = useNavigate();
+  const isAdmin = useAdminAccess();
+  const { organizations, loading: orgsLoading } = useOrganizations();
+
+  const [step, setStep] = useState<Step>('user');
+  const [error, setError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+
+  // Step 1: user details
+  const [firstName, setFirstName] = useState('');
+  const [lastName, setLastName] = useState('');
+  const [email, setEmail] = useState('');
+  const [makeAdmin, setMakeAdmin] = useState(false);
+  const [practitionerRef, setPractitionerRef] = useState<string | null>(null);
+  const [createdName, setCreatedName] = useState('');
+
+  // Step 2: role details (our own controls, so Receptionist works)
+  const [selectedOrgId, setSelectedOrgId] = useState<string | null>(null);
+  const [selectedRoles, setSelectedRoles] = useState<RoleValue[]>(['doctor']);
+  const [specialtyText, setSpecialtyText] = useState('');
+  const [availabilityExceptions, setAvailabilityExceptions] = useState('');
+  const showSpecialtyField = selectedRoles.some((r) => ROLES_WITH_SPECIALTY.has(r));
+
+  // Step 3: the actual PractitionerRole resource, refined via Medplum's native form
+  const [practitionerRole, setPractitionerRole] = useState<PractitionerRole | null>(null);
+
+  useEffect(() => {
+    if (organizations.length > 0 && !selectedOrgId) {
+      setSelectedOrgId(organizations[0].id ?? null);
+    }
+  }, [organizations, selectedOrgId]);
+
+  if (!isAdmin) {
+    return (
+      <Container size="sm" mt="xl">
+        <Alert color="red" title="Access denied">
+          You do not have permission to view this page or your session has expired.
+        </Alert>
+        <Group mt="md">
+          <Button variant="outline" onClick={() => navigate('/signin')}>Go to Sign In</Button>
+          <Button variant="light" onClick={() => navigate('/admin')}>Back to Staff Management</Button>
+        </Group>
+      </Container>
+    );
+  }
+
+  if (!orgsLoading && organizations.length === 0) {
+    return (
+      <Container size="sm" mt="xl">
+        <Alert color="blue" title="Set up your hospital first">
+          You'll need to create your hospital's organization before inviting staff.
+        </Alert>
+        <Button mt="md" variant="light" onClick={() => navigate('/admin')}>Back to Staff Management</Button>
+      </Container>
+    );
+  }
+
+  async function handleContinueFromUser(): Promise<void> {
+    setError(null);
+    if (!firstName.trim() || !lastName.trim() || !email.trim()) {
+      setError('First name, last name, and email are all required.');
+      return;
+    }
+
+    const project = medplum.getProject();
+    if (!project?.id) {
+      setError('Could not determine the current project.');
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      const membership = (await medplum.post(`admin/projects/${project.id}/invite`, {
+        resourceType: 'Practitioner',
+        firstName: firstName.trim(),
+        lastName: lastName.trim(),
+        email: email.trim(),
+        sendEmail: false,
+        scope: 'project',
+        membership: makeAdmin ? { admin: true } : undefined,
+      })) as ProjectMembership;
+
+      const ref = membership.profile?.reference ?? null;
+      if (!ref) {
+        setError('User created, but profile reference was missing.');
+        return;
+      }
+
+      setPractitionerRef(ref);
+      setCreatedName(`${firstName.trim()} ${lastName.trim()}`);
+      setStep('role');
+    } catch (err) {
+      console.error('Failed to invite user', err);
+      setError('Failed to send invite. Check console for details.');
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function handleContinueFromRole(): Promise<void> {
+    if (!practitionerRef) {
+      navigate('/admin');
+      return;
+    }
+
+    setError(null);
+    setSubmitting(true);
+    try {
+      const org = organizations.find((o) => o.id === selectedOrgId) ?? organizations[0];
+      const specialty: CodeableConcept[] | undefined =
+        showSpecialtyField && specialtyText.trim() ? [{ text: specialtyText.trim() }] : undefined;
+
+      const created = await medplum.createResource<PractitionerRole>({
+        resourceType: 'PractitionerRole',
+        active: true,
+        practitioner: { reference: practitionerRef },
+        organization: org?.id ? { reference: `Organization/${org.id}`, display: org.name } : undefined,
+        code: selectedRoles.length > 0 ? buildRoleCodes(selectedRoles) : undefined,
+        specialty,
+        availabilityExceptions: availabilityExceptions.trim() || undefined,
+      });
+
+      setPractitionerRole(created);
+      setStep('details');
+    } catch (err) {
+      console.error('Failed to save role', err);
+      setError('Failed to save role. Check console for details.');
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <Container size="md" my="lg">
+      <Text size="sm" c="dimmed" mb={4}>
+        {step === 'user' && 'Step 1 of 4 — User details'}
+        {step === 'role' && 'Step 2 of 4 — Role & assignment'}
+        {step === 'details' && 'Step 3 of 4 — Additional details (optional)'}
+        {step === 'review' && 'Step 4 of 4 — Review & confirm'}
+      </Text>
+      <Title order={2} mb="lg">New user</Title>
+
+      {error && <Alert color="red" title="Error" mb="md">{error}</Alert>}
+
+      {step === 'user' && (
+        <Stack>
+          <TextInput label="First name" placeholder="Jane" value={firstName} onChange={(e) => setFirstName(e.currentTarget.value)} required />
+          <TextInput label="Last name" placeholder="Doe" value={lastName} onChange={(e) => setLastName(e.currentTarget.value)} required />
+          <TextInput label="Email" placeholder="jane.doe@example.com" type="email" value={email} onChange={(e) => setEmail(e.currentTarget.value)} required />
+          <Checkbox label="Also make this user a project admin" checked={makeAdmin} onChange={(e) => setMakeAdmin(e.currentTarget.checked)} />
+          <Group justify="space-between" mt="md">
+            <Button variant="subtle" onClick={() => navigate('/admin')}>Cancel</Button>
+            <Button onClick={handleContinueFromUser} loading={submitting}>Continue</Button>
+          </Group>
+        </Stack>
+      )}
+
+      {step === 'role' && (
+        <Stack gap="md">
+          <Text size="sm">Set up {createdName}'s role and organization.</Text>
+
+          <Select
+            label="Organization"
+            data={organizations.map((org) => ({ value: org.id ?? '', label: org.name ?? 'Unnamed Org' }))}
+            value={selectedOrgId}
+            onChange={setSelectedOrgId}
+          />
+
+          <Card withBorder padding="sm">
+            <Text fw={600} size="sm" mb="xs">Role</Text>
+            <MultiSelect
+              placeholder="Select role(s)"
+              data={ROLE_OPTIONS.map((r) => ({ value: r.value, label: r.label }))}
+              value={selectedRoles}
+              onChange={(vals) => setSelectedRoles(vals as RoleValue[])}
+            />
+          </Card>
+
+          {showSpecialtyField && (
+            <TextInput label="Specialty" placeholder="e.g. Cardiology" value={specialtyText} onChange={(e) => setSpecialtyText(e.currentTarget.value)} />
+          )}
+
+          <Textarea
+            label="Availability Exceptions"
+            placeholder="e.g. Except public holidays and emergency on-call days"
+            value={availabilityExceptions}
+            onChange={(e) => setAvailabilityExceptions(e.currentTarget.value)}
+          />
+
+          <Group justify="space-between" mt="md">
+            <Button variant="subtle" onClick={() => navigate('/admin')}>Cancel</Button>
+            <Button onClick={handleContinueFromRole} loading={submitting}>Continue</Button>
+          </Group>
+        </Stack>
+      )}
+
+      {step === 'details' && practitionerRole && (
+        <Stack gap="md">
+          <Text size="sm">
+            Optional: add location, healthcare service, telecom, and availability using Medplum's standard editor.
+          </Text>
+
+          <ResourceForm
+            defaultValue={practitionerRole}
+            onSubmit={(updated) => {
+              setPractitionerRole(updated as PractitionerRole);
+              setStep('review');
+            }}
+          />
+
+          <Group justify="flex-end">
+            <Button variant="subtle" onClick={() => setStep('review')}>
+              Skip for now
+            </Button>
+          </Group>
+        </Stack>
+      )}
+
+      {step === 'review' && (
+        <Stack gap="md">
+          <Text size="sm" c="dimmed">Please review before returning to Staff Management.</Text>
+
+          <Card withBorder padding="md">
+            <List spacing="xs" size="sm">
+              <List.Item><strong>Name:</strong> {createdName}</List.Item>
+              <List.Item><strong>Email:</strong> {email}</List.Item>
+              <List.Item><strong>Admin access:</strong> {makeAdmin ? 'Yes' : 'No'}</List.Item>
+              <List.Item>
+                <strong>Organization:</strong>{' '}
+                {organizations.find((o) => o.id === selectedOrgId)?.name ?? '—'}
+              </List.Item>
+              <List.Item>
+                <strong>Role(s):</strong>{' '}
+                {selectedRoles.length > 0 ? selectedRoles.map(roleLabel).join(', ') : 'None set'}
+              </List.Item>
+              {specialtyText && <List.Item><strong>Specialty:</strong> {specialtyText}</List.Item>}
+              {availabilityExceptions && (
+                <List.Item><strong>Availability exceptions:</strong> {availabilityExceptions}</List.Item>
+              )}
+            </List>
+          </Card>
+
+          <Group justify="flex-end" mt="md">
+            <Button onClick={() => navigate('/admin')}>Confirm & Return to Staff Management</Button>
+          </Group>
+        </Stack>
+      )}
+    </Container>
+  );
+}

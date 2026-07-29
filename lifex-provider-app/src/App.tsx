@@ -29,6 +29,7 @@ import './index.css';
 const SETUP_DISMISSED_KEY = 'medplum-provider-setup-completed';
 const PROVIDER_HIDE_GET_STARTED_SETTING = 'hideGetStarted';
 
+import { NewUserPage } from './pages/admin/NewUserPage';
 import { AdminDashboard } from './pages/AdminDashboard';
 import { EncounterChartPage } from './pages/encounter/EncounterChartPage';
 import { EncounterModal } from './pages/encounter/EncounterModal';
@@ -197,6 +198,7 @@ export function App(): JSX.Element | null {
             <>
               <Route path="/getstarted" element={<GetStartedPage />} />
               <Route path="/admin" element={<AdminDashboard />} />
+              <Route path="/admin/new-user" element={<NewUserPage />} />
               <Route path="/Spaces/Communication" element={<SpacesPage />}>
                 <Route index element={<SpacesPage />} />
                 <Route path=":topicId" element={<SpacesPage />} />
