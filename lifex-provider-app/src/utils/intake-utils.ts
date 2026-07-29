@@ -27,20 +27,7 @@ import type {
   Reference,
 } from '@medplum/fhirtypes';
 
-export const PROFILE_URLS: Record<string, string> = {
-  AllergyIntolerance: `${HTTP_HL7_ORG}/fhir/us/core/StructureDefinition/us-core-allergyintolerance`,
-  CareTeam: `${HTTP_HL7_ORG}/fhir/us/core/StructureDefinition/us-core-careteam`,
-  Coverage: `${HTTP_HL7_ORG}/fhir/us/core/StructureDefinition/us-core-coverage`,
-  Immunization: `${HTTP_HL7_ORG}/fhir/us/core/StructureDefinition/us-core-immunization`,
-  MedicationRequest: `${HTTP_HL7_ORG}/fhir/us/core/StructureDefinition/us-core-medicationrequest`,
-  Patient: `${HTTP_HL7_ORG}/fhir/us/core/StructureDefinition/us-core-patient`,
-  ObservationSexualOrientation: `${HTTP_HL7_ORG}/fhir/us/core/StructureDefinition/us-core-observation-sexual-orientation`,
-  ObservationSmokingStatus: `${HTTP_HL7_ORG}/fhir/us/core/StructureDefinition/us-core-smokingstatus`,
-};
-
 export const extensionURLMapping: Record<string, string> = {
-  race: HTTP_HL7_ORG + '/fhir/us/core/StructureDefinition/us-core-race',
-  ethnicity: HTTP_HL7_ORG + '/fhir/us/core/StructureDefinition/us-core-ethnicity',
   veteran: HTTP_HL7_ORG + '/fhir/us/military-service/StructureDefinition/military-service-veteran-status',
 };
 
@@ -202,7 +189,7 @@ export async function upsertObservation(
   code: CodeableConcept,
   category: CodeableConcept,
   answerType: ObservationQuestionnaireItemType,
-  value: QuestionnaireResponseItemAnswer | undefined,
+  value: Coding | { valueDateTime?: string } | undefined,
   profileUrl?: string
 ): Promise<void> {
   if (!value || !code) {
@@ -224,10 +211,10 @@ export async function upsertObservation(
 
   if (answerType === 'valueCodeableConcept') {
     observation.valueCodeableConcept = {
-      coding: [value],
+      coding: [value as Coding],
     };
   } else if (answerType === 'valueDateTime') {
-    observation.valueDateTime = value.valueDateTime;
+    observation.valueDateTime = (value as { valueDateTime?: string }).valueDateTime;
   }
 
   const coding = code.coding?.[0] as Coding;
@@ -339,51 +326,21 @@ export async function addAllergy(
   patient: Patient,
   answers: Record<string, QuestionnaireResponseItemAnswer>
 ): Promise<void> {
-  const code = answers['allergy-substance']?.valueCoding;
-
-  if (!code) {
-    return;
-  }
+  const substance = answers['allergy-substance']?.valueString;
+  if (!substance) return;
 
   const reaction = answers['allergy-reaction']?.valueString;
   const onsetDateTime = answers['allergy-onset']?.valueDateTime;
 
-  await medplum.upsertResource(
-    {
-      resourceType: 'AllergyIntolerance',
-      meta: {
-        profile: [PROFILE_URLS.AllergyIntolerance],
-      },
-      clinicalStatus: {
-        text: 'Active',
-        coding: [
-          {
-            system: 'http://hl7.org/fhir/ValueSet/allergyintolerance-clinical',
-            code: 'active',
-            display: 'Active',
-          },
-        ],
-      },
-      verificationStatus: {
-        text: 'Unconfirmed',
-        coding: [
-          {
-            system: 'http://hl7.org/fhir/ValueSet/allergyintolerance-verification',
-            code: 'unconfirmed',
-            display: 'Unconfirmed',
-          },
-        ],
-      },
-      patient: createReference(patient),
-      code: { coding: [code] },
-      reaction: reaction ? [{ manifestation: [{ text: reaction }] }] : undefined,
-      onsetDateTime: onsetDateTime,
-    },
-    {
-      patient: getReferenceString(patient),
-      code: `${code.system}|${code.code}`,
-    }
-  );
+  await medplum.createResource({
+    resourceType: 'AllergyIntolerance',
+    clinicalStatus: { text: 'Active', coding: [{ system: 'http://hl7.org/fhir/ValueSet/allergyintolerance-clinical', code: 'active', display: 'Active' }] },
+    verificationStatus: { text: 'Unconfirmed', coding: [{ system: 'http://hl7.org/fhir/ValueSet/allergyintolerance-verification', code: 'unconfirmed', display: 'Unconfirmed' }] },
+    patient: createReference(patient),
+    code: { text: substance },
+    reaction: reaction ? [{ manifestation: [{ text: reaction }] }] : undefined,
+    onsetDateTime,
+  });
 }
 
 /**
@@ -399,32 +356,20 @@ export async function addMedication(
   patient: Patient,
   answers: Record<string, QuestionnaireResponseItemAnswer>
 ): Promise<void> {
-  const code = answers['medication-code']?.valueCoding;
-
-  if (!code) {
-    return;
-  }
+  const medicationName = answers['medication-code']?.valueString;
+  if (!medicationName) return;
 
   const note = answers['medication-note']?.valueString;
 
-  await medplum.upsertResource(
-    {
-      resourceType: 'MedicationRequest',
-      meta: {
-        profile: [PROFILE_URLS.MedicationRequest],
-      },
-      subject: createReference(patient),
-      status: 'active',
-      intent: 'order',
-      requester: createReference(patient),
-      medicationCodeableConcept: { coding: [code] },
-      note: note ? [{ text: note }] : undefined,
-    },
-    {
-      subject: getReferenceString(patient),
-      code: `${code.system}|${code.code}`,
-    }
-  );
+  await medplum.createResource({
+    resourceType: 'MedicationRequest',
+    subject: createReference(patient),
+    status: 'active',
+    intent: 'order',
+    requester: createReference(patient),
+    medicationCodeableConcept: { text: medicationName },
+    note: note ? [{ text: note }] : undefined,
+  });
 }
 
 /**
@@ -440,28 +385,19 @@ export async function addCondition(
   patient: Patient,
   answers: Record<string, QuestionnaireResponseItemAnswer>
 ): Promise<void> {
-  const code = answers['medical-history-problem']?.valueCoding;
-
-  if (!code) {
-    return;
-  }
+  const problem = answers['medical-history-problem']?.valueString;
+  if (!problem) return;
 
   const clinicalStatus = answers['medical-history-clinical-status']?.valueCoding;
   const onsetDateTime = answers['medical-history-onset']?.valueDateTime;
 
-  await medplum.upsertResource(
-    {
-      resourceType: 'Condition',
-      subject: createReference(patient),
-      code: { coding: [code] },
-      clinicalStatus: clinicalStatus ? { coding: [clinicalStatus] } : undefined,
-      onsetDateTime: onsetDateTime,
-    },
-    {
-      subject: getReferenceString(patient),
-      code: `${code?.system}|${code?.code}`,
-    }
-  );
+  await medplum.createResource({
+    resourceType: 'Condition',
+    subject: createReference(patient),
+    code: { text: problem },
+    clinicalStatus: clinicalStatus ? { coding: [clinicalStatus] } : undefined,
+    onsetDateTime,
+  });
 }
 
 /**
@@ -477,30 +413,20 @@ export async function addFamilyMemberHistory(
   patient: Patient,
   answers: Record<string, QuestionnaireResponseItemAnswer>
 ): Promise<void> {
-  const condition = answers['family-member-history-problem']?.valueCoding;
+  const problem = answers['family-member-history-problem']?.valueString;
   const relationship = answers['family-member-history-relationship']?.valueCoding;
-
-  if (!condition || !relationship) {
-    return;
-  }
+  if (!problem || !relationship) return;
 
   const deceased = answers['family-member-history-deceased']?.valueBoolean;
 
-  await medplum.upsertResource(
-    {
-      resourceType: 'FamilyMemberHistory',
-      patient: createReference(patient),
-      status: 'completed',
-      relationship: { coding: [relationship] },
-      condition: [{ code: { coding: [condition] } }],
-      deceasedBoolean: deceased,
-    },
-    {
-      patient: getReferenceString(patient),
-      code: `${condition.system}|${condition.code}`,
-      relationship: `${relationship.system}|${relationship.code}`,
-    }
-  );
+  await medplum.createResource({
+    resourceType: 'FamilyMemberHistory',
+    patient: createReference(patient),
+    status: 'completed',
+    relationship: { coding: [relationship] },
+    condition: [{ code: { text: problem } }],
+    deceasedBoolean: deceased,
+  });
 }
 
 /**
@@ -515,31 +441,17 @@ export async function addImmunization(
   patient: Patient,
   answers: Record<string, QuestionnaireResponseItemAnswer>
 ): Promise<void> {
-  const code = answers['immunization-vaccine']?.valueCoding;
+  const vaccine = answers['immunization-vaccine']?.valueString;
   const occurrenceDateTime = answers['immunization-date']?.valueDateTime;
+  if (!vaccine || !occurrenceDateTime) return;
 
-  if (!code || !occurrenceDateTime) {
-    return;
-  }
-
-  await medplum.upsertResource(
-    {
-      resourceType: 'Immunization',
-      meta: {
-        profile: [PROFILE_URLS.Immunization],
-      },
-      status: 'completed',
-      vaccineCode: { coding: [code] },
-      patient: createReference(patient),
-      occurrenceDateTime: occurrenceDateTime,
-    },
-    {
-      status: 'completed',
-      'vaccine-code': `${code.system}|${code.code}`,
-      patient: getReferenceString(patient),
-      date: occurrenceDateTime,
-    }
-  );
+  await medplum.createResource({
+    resourceType: 'Immunization',
+    status: 'completed',
+    vaccineCode: { text: vaccine },
+    patient: createReference(patient),
+    occurrenceDateTime,
+  });
 }
 
 /**
@@ -558,7 +470,7 @@ export async function addPharmacy(
     {
       resourceType: 'CareTeam',
       meta: {
-        profile: [PROFILE_URLS.CareTeam],
+        profile: [],
       },
       status: 'proposed',
       name: 'Patient Preferred Pharmacy',
@@ -619,7 +531,7 @@ export async function addCoverage(
     {
       resourceType: 'Coverage',
       meta: {
-        profile: [PROFILE_URLS.Coverage],
+        profile: [],
       },
       status: 'active',
       beneficiary: createReference(patient),

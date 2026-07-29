@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright Orangebot, Inc. and Medplum contributors
 // SPDX-License-Identifier: Apache-2.0
 import type { MedplumClient } from '@medplum/core';
-import { addProfileToResource, append, createReference, EMPTY, getQuestionnaireAnswers } from '@medplum/core';
+import { append, createReference, EMPTY, getQuestionnaireAnswers } from '@medplum/core';
 import type { Organization, Patient, Questionnaire, QuestionnaireResponse, Reference } from '@medplum/fhirtypes';
 import {
   addAllergy,
@@ -24,7 +24,6 @@ import {
   getPatientAddress,
   observationCategoryMapping,
   observationCodeMapping,
-  PROFILE_URLS,
   upsertObservation,
 } from './intake-utils';
 
@@ -39,7 +38,6 @@ export async function onboardPatient(
     resourceType: 'Patient',
   };
 
-  patient = addProfileToResource(patient, PROFILE_URLS.Patient);
 
   // Handle demographic information
 
@@ -65,21 +63,8 @@ export async function onboardPatient(
     patient.telecom = [{ system: 'phone', value: answers['phone'].valueString }];
   }
 
-  if (answers['ssn']?.valueString) {
-    patient.identifier = [
-      {
-        type: {
-          coding: [
-            {
-              system: 'http://terminology.hl7.org/CodeSystem/v2-0203',
-              code: 'SS',
-            },
-          ],
-        },
-        system: 'http://hl7.org/fhir/sid/us-ssn',
-        value: answers['ssn'].valueString,
-      },
-    ];
+  if (answers['government-id']?.valueString) {
+  patient.identifier = [{ value: answers['government-id'].valueString }];
   }
 
   const emergencyContacts = getGroupRepeatedAnswers(questionnaire, response, 'emergency-contact');
@@ -101,8 +86,7 @@ export async function onboardPatient(
     });
   }
 
-  addExtension(patient, extensionURLMapping.race, 'valueCoding', answers['race'], 'ombCategory');
-  addExtension(patient, extensionURLMapping.ethnicity, 'valueCoding', answers['ethnicity'], 'ombCategory');
+
   addExtension(patient, extensionURLMapping.veteran, 'valueBoolean', answers['veteran-status']);
 
   addLanguage(patient, answers['languages-spoken']?.valueCoding);
@@ -120,14 +104,13 @@ export async function onboardPatient(
   // Handle observations
 
   await upsertObservation(
-    medplum,
-    patient,
-    observationCodeMapping.sexualOrientation,
-    observationCategoryMapping.socialHistory,
-    'valueCodeableConcept',
-    answers['sexual-orientation']?.valueCoding,
-    PROFILE_URLS.ObservationSexualOrientation
-  );
+  medplum,
+  patient,
+  observationCodeMapping.sexualOrientation,
+  observationCategoryMapping.socialHistory,
+  'valueCodeableConcept',
+  answers['sexual-orientation']?.valueString ? { display: answers['sexual-orientation'].valueString } : undefined
+);
 
   await upsertObservation(
     medplum,
@@ -154,7 +137,6 @@ export async function onboardPatient(
     observationCategoryMapping.socialHistory,
     'valueCodeableConcept',
     answers['smoking-status']?.valueCoding,
-    PROFILE_URLS.ObservationSmokingStatus
   );
 
   await upsertObservation(

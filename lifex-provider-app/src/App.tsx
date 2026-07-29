@@ -23,6 +23,7 @@ import { Navigate, Route, Routes, useLocation, useSearchParams } from 'react-rou
 import { TaskDetailsModal } from './components/tasks/TaskDetailsModal';
 import { hasScriptSureIdentifier } from './components/utils';
 import { useAdminAccess } from './hooks/useAdminAccess';
+import { usePractitionerRoles } from './hooks/usePractitionerRoles';
 import { useDoseSpotAccess } from './hooks/useDoseSpotAccess';
 import './index.css';
 
@@ -82,10 +83,13 @@ export function App(): JSX.Element | null {
     () => localStorage.getItem(SETUP_DISMISSED_KEY) === 'true'
   );
   const setupDismissed = setupDisabledByProject || setupDismissedByUser;
-  const { hasAccess: hasDoseSpot } = useDoseSpotAccess();
+  const { hasAccess: hasDoseSpotRaw } = useDoseSpotAccess();
   const isAdmin = useAdminAccess();
+  const { isDoctor, isNurse } = usePractitionerRoles();
   const membership = medplum.getProjectMembership();
-  const hasScriptSure = hasScriptSureIdentifier(membership);
+  const hasScriptSureRaw = hasScriptSureIdentifier(membership);
+  const hasDoseSpot = hasDoseSpotRaw && isDoctor;
+  const hasScriptSure = hasScriptSureRaw && isDoctor;
 
   const handleDismissSetup = (): void => {
     localStorage.setItem(SETUP_DISMISSED_KEY, 'true');
@@ -136,7 +140,9 @@ export function App(): JSX.Element | null {
                       subscriptionCriteria: `Task?owner=${getReferenceString(profile)}&status=requested,ready,received,accepted,in-progress,draft`,
                     },
                   },
-                  { icon: <IconPrinter />, label: 'Faxes', href: '/Fax/Communication' },
+                  ...(!isDoctor && !isNurse
+                    ? [{ icon: <IconPrinter />, label: 'Faxes', href: '/Fax/Communication' }]
+                    : []),
                   ...(isAdmin
                     ? [
                         {
