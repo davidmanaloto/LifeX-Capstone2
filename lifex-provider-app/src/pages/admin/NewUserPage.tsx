@@ -22,6 +22,7 @@ import {
 import { useAdminAccess } from '../../hooks/useAdminAccess';
 import { useOrganizations } from '../../hooks/useOrganizations';
 import { ROLE_OPTIONS, ROLES_WITH_SPECIALTY, buildRoleCodes, roleLabel, type RoleValue } from '../../utils/practitionerRoles';
+import { resolveAccessPolicyForRoles, resolveHospitalAdminAccessPolicy } from '../../utils/accessPolicies';
 
 type Step = 'user' | 'role' | 'details' | 'review';
 
@@ -35,29 +36,32 @@ export function NewUserPage(): JSX.Element {
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
-  // Step 1: user details
+  // Step 1: user details (collected only, not submitted yet)
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
   const [email, setEmail] = useState('');
   const [makeAdmin, setMakeAdmin] = useState(false);
-  const [practitionerRef, setPractitionerRef] = useState<string | null>(null);
-  const [createdName, setCreatedName] = useState('');
 
-  // Step 2: role details (our own controls, so Receptionist works)
+  // Step 2: role details (collected, then used to submit invite + role together)
   const [selectedOrgId, setSelectedOrgId] = useState<string | null>(null);
   const [selectedRoles, setSelectedRoles] = useState<RoleValue[]>(['doctor']);
   const [specialtyText, setSpecialtyText] = useState('');
   const [availabilityExceptions, setAvailabilityExceptions] = useState('');
   const showSpecialtyField = selectedRoles.some((r) => ROLES_WITH_SPECIALTY.has(r));
 
-  // Step 3: the actual PractitionerRole resource, refined via Medplum's native form
+  // Set after the invite + PractitionerRole are actually created
+  const [practitionerRef, setPractitionerRef] = useState<string | null>(null);
+  const [createdName, setCreatedName] = useState('');
   const [practitionerRole, setPractitionerRole] = useState<PractitionerRole | null>(null);
 
   useEffect(() => {
-    if (organizations.length > 0 && !selectedOrgId) {
-      setSelectedOrgId(organizations[0].id ?? null);
+    if (makeAdmin) {
+      setSelectedRoles([]);
+      setSpecialtyText('');
+    } else if (selectedRoles.length === 0) {
+      setSelectedRoles(['doctor']);
     }
-  }, [organizations, selectedOrgId]);
+  }, [makeAdmin]);
 
   if (!isAdmin) {
     return (
@@ -84,21 +88,32 @@ export function NewUserPage(): JSX.Element {
     );
   }
 
-  async function handleContinueFromUser(): Promise<void> {
+  // Step 1 → Step 2: just validates and advances, no API call yet.
+  function handleContinueFromUser(): void {
     setError(null);
     if (!firstName.trim() || !lastName.trim() || !email.trim()) {
       setError('First name, last name, and email are all required.');
       return;
     }
+    setStep('role');
+  }
 
+  // Step 2 → Step 3: THIS is where the actual invite + AccessPolicy + PractitionerRole
+  // all happen together, now that we know both the admin flag AND the selected roles.
+  async function handleContinueFromRole(): Promise<void> {
     const project = medplum.getProject();
     if (!project?.id) {
       setError('Could not determine the current project.');
       return;
     }
 
+    setError(null);
     setSubmitting(true);
     try {
+      const accessPolicy = makeAdmin
+        ? await resolveHospitalAdminAccessPolicy(medplum)
+        : await resolveAccessPolicyForRoles(medplum, selectedRoles);
+
       const membership = (await medplum.post(`admin/projects/${project.id}/invite`, {
         resourceType: 'Practitioner',
         firstName: firstName.trim(),
@@ -106,54 +121,41 @@ export function NewUserPage(): JSX.Element {
         email: email.trim(),
         sendEmail: false,
         scope: 'project',
-        membership: makeAdmin ? { admin: true } : undefined,
+        membership: {
+          admin: makeAdmin || undefined,
+          accessPolicy,
+        },
       })) as ProjectMembership;
 
       const ref = membership.profile?.reference ?? null;
       if (!ref) {
         setError('User created, but profile reference was missing.');
+        setSubmitting(false);
         return;
       }
 
       setPractitionerRef(ref);
       setCreatedName(`${firstName.trim()} ${lastName.trim()}`);
-      setStep('role');
-    } catch (err) {
-      console.error('Failed to invite user', err);
-      setError('Failed to send invite. Check console for details.');
-    } finally {
-      setSubmitting(false);
-    }
-  }
 
-  async function handleContinueFromRole(): Promise<void> {
-    if (!practitionerRef) {
-      navigate('/admin');
-      return;
-    }
-
-    setError(null);
-    setSubmitting(true);
-    try {
       const org = organizations.find((o) => o.id === selectedOrgId) ?? organizations[0];
       const specialty: CodeableConcept[] | undefined =
         showSpecialtyField && specialtyText.trim() ? [{ text: specialtyText.trim() }] : undefined;
 
-      const created = await medplum.createResource<PractitionerRole>({
+      const createdRole = await medplum.createResource<PractitionerRole>({
         resourceType: 'PractitionerRole',
         active: true,
-        practitioner: { reference: practitionerRef },
+        practitioner: { reference: ref },
         organization: org?.id ? { reference: `Organization/${org.id}`, display: org.name } : undefined,
         code: selectedRoles.length > 0 ? buildRoleCodes(selectedRoles) : undefined,
         specialty,
         availabilityExceptions: availabilityExceptions.trim() || undefined,
       });
 
-      setPractitionerRole(created);
-      setStep('details');
+      setPractitionerRole(createdRole);
+      setStep(makeAdmin ? 'review' : 'details');
     } catch (err) {
-      console.error('Failed to save role', err);
-      setError('Failed to save role. Check console for details.');
+      console.error('Failed to create user and role', err);
+      setError('Failed to create user. Check console for details.');
     } finally {
       setSubmitting(false);
     }
@@ -179,14 +181,14 @@ export function NewUserPage(): JSX.Element {
           <Checkbox label="Also make this user a project admin" checked={makeAdmin} onChange={(e) => setMakeAdmin(e.currentTarget.checked)} />
           <Group justify="space-between" mt="md">
             <Button variant="subtle" onClick={() => navigate('/admin')}>Cancel</Button>
-            <Button onClick={handleContinueFromUser} loading={submitting}>Continue</Button>
+            <Button onClick={handleContinueFromUser}>Continue</Button>
           </Group>
         </Stack>
       )}
 
       {step === 'role' && (
         <Stack gap="md">
-          <Text size="sm">Set up {createdName}'s role and organization.</Text>
+          <Text size="sm">Set up {firstName} {lastName}'s role and organization.</Text>
 
           <Select
             label="Organization"
@@ -202,7 +204,14 @@ export function NewUserPage(): JSX.Element {
               data={ROLE_OPTIONS.map((r) => ({ value: r.value, label: r.label }))}
               value={selectedRoles}
               onChange={(vals) => setSelectedRoles(vals as RoleValue[])}
+              disabled={makeAdmin}
             />
+            {makeAdmin && (
+              <Text size="xs" c="dimmed" mt={4}>
+                This user was marked as a project admin, so they'll use the Hospital Admin access policy regardless
+                of role selection here. Role labels below are still saved for display purposes.
+              </Text>
+            )}
           </Card>
 
           {showSpecialtyField && (
@@ -217,8 +226,10 @@ export function NewUserPage(): JSX.Element {
           />
 
           <Group justify="space-between" mt="md">
-            <Button variant="subtle" onClick={() => navigate('/admin')}>Cancel</Button>
-            <Button onClick={handleContinueFromRole} loading={submitting}>Continue</Button>
+            <Button variant="subtle" onClick={() => setStep('user')}>Back</Button>
+            <Button onClick={() => { handleContinueFromRole().catch((err) => console.error(err)); }} loading={submitting}>
+              Create User
+            </Button>
           </Group>
         </Stack>
       )}
@@ -260,9 +271,13 @@ export function NewUserPage(): JSX.Element {
               </List.Item>
               <List.Item>
                 <strong>Role(s):</strong>{' '}
-                {selectedRoles.length > 0 ? selectedRoles.map(roleLabel).join(', ') : 'None set'}
+                {makeAdmin
+                  ? 'Hospital Admin (full access policy — no clinical role)'
+                  : selectedRoles.length > 0
+                    ? selectedRoles.map(roleLabel).join(', ')
+                    : 'None set'}
               </List.Item>
-              {specialtyText && <List.Item><strong>Specialty:</strong> {specialtyText}</List.Item>}
+              {!makeAdmin && specialtyText && <List.Item><strong>Specialty:</strong> {specialtyText}</List.Item>}
               {availabilityExceptions && (
                 <List.Item><strong>Availability exceptions:</strong> {availabilityExceptions}</List.Item>
               )}
