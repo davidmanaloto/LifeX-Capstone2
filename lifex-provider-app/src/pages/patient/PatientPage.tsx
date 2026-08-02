@@ -21,6 +21,7 @@ import { usePatient } from '../../hooks/usePatient';
 import { OrderLabsPage } from '../labs/OrderLabsPage';
 import classes from './PatientPage.module.css';
 import { getPatientPageTabs, patientPathPrefix } from './PatientPage.utils';
+import { DemographicsSectionNoRaceEthnicity } from '../../components/patient/customSections';
 
 export function PatientPage(): JSX.Element {
   const navigate = useNavigate();
@@ -47,9 +48,11 @@ export function PatientPage(): JSX.Element {
 
   const sections = useMemo(
     () =>
-      getDefaultSections(() => setIsLabsModalOpen(true)).map((s) =>
-        s.key === 'pharmacies' ? createPharmaciesSection(PharmacyDialogComponent) : s
-      ),
+      getDefaultSections(() => setIsLabsModalOpen(true)).map((s) =>{
+        if (s.key === 'pharmacies') return createPharmaciesSection(PharmacyDialogComponent);
+        if (s.key === 'demographics') return DemographicsSectionNoRaceEthnicity;
+        return s;
+      }),
     [setIsLabsModalOpen, PharmacyDialogComponent]
   );
 
