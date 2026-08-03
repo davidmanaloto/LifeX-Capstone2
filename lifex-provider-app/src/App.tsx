@@ -30,6 +30,7 @@ import './index.css';
 const SETUP_DISMISSED_KEY = 'medplum-provider-setup-completed';
 const PROVIDER_HIDE_GET_STARTED_SETTING = 'hideGetStarted';
 
+import { AuditLogPage } from './pages/admin/AuditLogPage';
 import { NewUserPage } from './pages/admin/NewUserPage';
 import { AdminDashboard } from './pages/AdminDashboard';
 import { EncounterChartPage } from './pages/encounter/EncounterChartPage';
@@ -112,13 +113,11 @@ export function App(): JSX.Element | null {
           ? [
               {
                 links: [
-                  { icon: <IconBook2 />, label: 'Spaces', href: '/Spaces/Communication' },
-                  {
-                    icon: <IconUsers />,
-                    label: 'Patients',
-                    href: '/Patient?_count=20&_fields=name,email,gender&_sort=-_lastUpdated',
-                  },
-                  { icon: <IconCalendarEvent />, label: 'Schedule', href: `/Calendar/Schedule` },
+                  ...(!isAdmin ? [{ icon: <IconBook2 />, label: 'Spaces', href: '/Spaces/Communication' }] : []),
+                  ...(!isAdmin ? [{ icon: <IconUsers />, label: 'Patients', href: '/Patient?_count=20&_fields=name,email,gender&_sort=-_lastUpdated', }] : []),
+                  ...(!isAdmin
+                    ? [{ icon: <IconCalendarEvent />, label: 'Schedule', href: `/Calendar/Schedule` }]
+                    : []),
                   {
                     icon: <IconMail />,
                     label: 'Messages',
@@ -140,7 +139,7 @@ export function App(): JSX.Element | null {
                       subscriptionCriteria: `Task?owner=${getReferenceString(profile)}&status=requested,ready,received,accepted,in-progress,draft`,
                     },
                   },
-                  ...(!isDoctor && !isNurse
+                  ...(!isDoctor && !isNurse && !isAdmin
                     ? [{ icon: <IconPrinter />, label: 'Faxes', href: '/Fax/Communication' }]
                     : []),
                   ...(isAdmin
@@ -150,6 +149,16 @@ export function App(): JSX.Element | null {
                           label: 'Admin',
                           href: '/admin',
                         },
+                        {
+                          icon: <IconUserPlus />,
+                          label: 'New User',
+                          href: '/admin/new-user',
+                        },
+                        {
+                          icon: <IconClipboardCheck />,
+                          label: 'Activity Log',
+                          href: '/admin/audit-log',
+                        }
                       ]
                     : []),
                 ],
@@ -167,7 +176,7 @@ export function App(): JSX.Element | null {
                         },
                       ]
                     : []),
-                  { icon: <IconUserPlus />, label: 'New Patient', href: '/onboarding' },
+                  ...(!isAdmin ? [{ icon: <IconUserPlus />, label: 'New Patient', href: '/onboarding' }] : []),
                   { icon: <IconApps />, label: 'Integrations', href: '/integrations' },
                   ...(hasDoseSpot
                     ? [
@@ -205,6 +214,7 @@ export function App(): JSX.Element | null {
               <Route path="/getstarted" element={<GetStartedPage />} />
               <Route path="/admin" element={<AdminDashboard />} />
               <Route path="/admin/new-user" element={<NewUserPage />} />
+              <Route path="/admin/audit-log" element={<AuditLogPage />} />
               <Route path="/Spaces/Communication" element={<SpacesPage />}>
                 <Route index element={<SpacesPage />} />
                 <Route path=":topicId" element={<SpacesPage />} />
@@ -214,9 +224,11 @@ export function App(): JSX.Element | null {
                 element={
                   <Navigate
                     to={
-                      setupDismissed
-                        ? '/Patient?_count=20&_fields=name,email,gender&_sort=-_lastUpdated'
-                        : '/getstarted'
+                      isAdmin
+                        ? '/admin'
+                        : setupDismissed
+                          ? '/Patient?_count=20&_fields=name,email,gender&_sort=-_lastUpdated'
+                          : '/getstarted'
                     }
                     replace
                   />

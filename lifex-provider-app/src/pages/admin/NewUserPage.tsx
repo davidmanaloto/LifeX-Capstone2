@@ -23,6 +23,7 @@ import { useAdminAccess } from '../../hooks/useAdminAccess';
 import { useOrganizations } from '../../hooks/useOrganizations';
 import { ROLE_OPTIONS, ROLES_WITH_SPECIALTY, buildRoleCodes, roleLabel, type RoleValue } from '../../utils/practitionerRoles';
 import { resolveAccessPolicyForRoles, resolveHospitalAdminAccessPolicy } from '../../utils/accessPolicies';
+import { createRoleChangeAuditEvent } from '../../utils/auditLog';
 
 type Step = 'user' | 'role' | 'details' | 'review';
 
@@ -152,6 +153,13 @@ export function NewUserPage(): JSX.Element {
       });
 
       setPractitionerRole(createdRole);
+      if (selectedRoles.length > 0) {
+        try {
+          await createRoleChangeAuditEvent(medplum, ref, `${firstName.trim()} ${lastName.trim()}`, [], selectedRoles);
+        } catch (err) {
+          console.error('Failed to record role-assignment audit event', err);
+        }
+      }
       setStep(makeAdmin ? 'review' : 'details');
     } catch (err) {
       console.error('Failed to create user and role', err);
