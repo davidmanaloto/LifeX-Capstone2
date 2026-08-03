@@ -226,6 +226,8 @@ lifex-capstone2/
 
 ## Understanding Medplum
 
+- **Note:** `what medplum offers is a template, its our job to configure it to our needs. You will notice it does not have RBAC in accounts, we will add that, so on and so forth in features.`
+
 - **Admin Interface-** `this acts more like a console for FHIR than a usable UI, you only need this to make and modify "Projects", "Organizations", "Hospital Admins", "Access Policy", "JSON related inputs" (to be expanded)`
 
 - **Provider Interface-** `this is the main interface hospital staffs uses. This will house the Hospital Admin, Clinical Staffs such as Docotors and Nurses. This should entirely be interactive UI, no FHIR code to be seen.`
