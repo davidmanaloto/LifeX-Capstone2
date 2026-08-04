@@ -27,6 +27,18 @@ import {
 import { IconAlertTriangle, IconSearch } from '@tabler/icons-react';
 import { useAdminAccess } from '../hooks/useAdminAccess';
 import { useOrganizations } from '../hooks/useOrganizations';
+import { useLocations } from '../hooks/useLocations';
+import { useAppointments } from '../hooks/useAppointments';
+import { useNavigate } from 'react-router';
+import {
+  createLocationAssignmentAuditEvent,
+  createStatusChangeAuditEvent,
+  createRoleChangeAuditEvent,
+  DEACTIVATION_REASONS,
+  REACTIVATION_REASONS,
+  ROLE_CHANGE_REASONS,
+  DEPARTMENT_CHANGE_REASONS,
+} from '../utils/auditLog';
 import { CreateOrganizationModal } from '../components/admin/CreateOrganizationModal';
 import {
   getRoleValues,
@@ -36,14 +48,6 @@ import {
   ROLE_OPTIONS,
   type RoleValue,
 } from '../utils/practitionerRoles';
-
-import {
-  createStatusChangeAuditEvent,
-  createRoleChangeAuditEvent,
-  DEACTIVATION_REASONS,
-  REACTIVATION_REASONS,
-  ROLE_CHANGE_REASONS,
-} from '../utils/auditLog';
 
 interface PendingToggle {
   membership: ProjectMembership;
@@ -58,6 +62,9 @@ interface BulkStatusTarget {
 export function AdminDashboard(): JSX.Element {
   const medplum = useMedplum();
   const isAdmin = useAdminAccess();
+  const navigate = useNavigate();
+  const { locations } = useLocations();
+  const { appointments } = useAppointments();
 
   const [practitioners, setPractitioners] = useState<Practitioner[]>([]);
   const [memberships, setMemberships] = useState<ProjectMembership[]>([]);
@@ -81,11 +88,20 @@ export function AdminDashboard(): JSX.Element {
   // Bulk role assignment
   const [bulkRoleModalOpen, setBulkRoleModalOpen] = useState(false);
   const [bulkRoleAction, setBulkRoleAction] = useState<'replace' | 'add' | 'remove'>('replace');
-  const [bulkRoles, setBulkRoles] = useState<string[]>([]);
+  const [bulkRoles, setBulkRoles] = useState<RoleValue[]>([]);
   const [bulkRoleReason, setBulkRoleReason] = useState<string | null>(null);
   const [bulkRoleNotes, setBulkRoleNotes] = useState('');
   const [bulkRoleConfirmText, setBulkRoleConfirmText] = useState('');
   const [bulkRoleSubmitting, setBulkRoleSubmitting] = useState(false);
+
+  // Bulk department assignment
+  const [bulkDeptModalOpen, setBulkDeptModalOpen] = useState(false);
+  const [bulkDeptAction, setBulkDeptAction] = useState<'replace' | 'add' | 'remove'>('replace');
+  const [bulkDeptLocationIds, setBulkDeptLocationIds] = useState<string[]>([]);
+  const [bulkDeptReason, setBulkDeptReason] = useState<string | null>(null);
+  const [bulkDeptNotes, setBulkDeptNotes] = useState('');
+  const [bulkDeptConfirmText, setBulkDeptConfirmText] = useState('');
+  const [bulkDeptSubmitting, setBulkDeptSubmitting] = useState(false);
 
   // Bulk status change (deactivate/reactivate)
   const [bulkStatusTargets, setBulkStatusTargets] = useState<BulkStatusTarget[] | null>(null);
@@ -148,6 +164,25 @@ export function AdminDashboard(): JSX.Element {
     return { total, activeCount, inactiveCount, roleCounts, noRoleStaff };
   }, [practitioners, memberships, roles]);
 
+  const hospitalSummary = useMemo(() => {
+    const activeOrgs = organizations.filter((o) => o.active !== false).length;
+    const activeLocations = locations.filter((l) => l.status !== 'inactive').length;
+
+    const todayStr = new Date().toDateString();
+    const todaysAppointments = appointments.filter(
+      (a) => a.start && new Date(a.start).toDateString() === todayStr
+    ).length;
+
+    return {
+      totalOrgs: organizations.length,
+      activeOrgs,
+      totalLocations: locations.length,
+      activeLocations,
+      todaysAppointments,
+      totalAppointments: appointments.length,
+    };
+  }, [organizations, locations, appointments]);
+
   const filteredPractitioners = useMemo(() => {
     return practitioners.filter((p) => {
       const displayName = `${p.name?.[0]?.given?.join(' ') ?? ''} ${p.name?.[0]?.family ?? ''}`.trim().toLowerCase();
@@ -196,6 +231,14 @@ export function AdminDashboard(): JSX.Element {
     return memberships.find((m) => m.profile?.reference === practitionerRef);
   }
 
+  function findLocationNames(practitioner: Practitioner): string[] {
+    const role = findRole(practitioner);
+    if (!role?.location) return [];
+    return role.location
+      .map((ref) => locations.find((l) => `Location/${l.id}` === ref.reference)?.name)
+      .filter((n): n is string => Boolean(n));
+  }
+
   function findRole(practitioner: Practitioner): PractitionerRole | undefined {
     const practitionerRef = getReferenceString(practitioner);
     return roles.find((r) => r.practitioner?.reference === practitionerRef);
@@ -223,95 +266,178 @@ export function AdminDashboard(): JSX.Element {
 
   // --- Bulk role assignment ---
 
- function openBulkRoleModal(): void {
-  setBulkRoleAction('replace');
-  setBulkRoles([]);
-  setBulkRoleReason(null);
-  setBulkRoleNotes('');
-  setBulkRoleConfirmText('');
-  setBulkRoleModalOpen(true);
-}
-
-function closeBulkRoleModal(): void {
-  setBulkRoleModalOpen(false);
-}
-
-async function submitBulkRoleAssignment(): Promise<void> {
-  if (bulkRoles.length === 0) {
-    return;
+  function openBulkRoleModal(): void {
+    setBulkRoleAction('replace');
+    setBulkRoles([]);
+    setBulkRoleReason(null);
+    setBulkRoleNotes('');
+    setBulkRoleConfirmText('');
+    setBulkRoleModalOpen(true);
   }
-  setBulkRoleSubmitting(true);
-  setActionError(null);
-  try {
-    await Promise.all(
-      selectedPractitioners.map(async (p) => {
-        const practitionerId = p.id;
-        if (!practitionerId) {
-          console.warn('Skipping practitioner with no id during bulk role assignment');
-          return;
-        }
 
-        const existing = findRole(p);
-        const previousRoles = getRoleValues(existing);
-        const name = `${p.name?.[0]?.given?.join(' ') ?? ''} ${p.name?.[0]?.family ?? ''}`.trim() || '(unnamed)';
-        const practitionerRef = `Practitioner/${practitionerId}`;
-
-        let finalRoles: RoleValue[];
-        if (bulkRoleAction === 'replace') {
-          finalRoles = bulkRoles as RoleValue[];
-        } else if (bulkRoleAction === 'add') {
-          finalRoles = Array.from(new Set([...previousRoles, ...(bulkRoles as RoleValue[])]));
-        } else {
-          // remove
-          finalRoles = previousRoles.filter((r) => !bulkRoles.includes(r));
-        }
-
-        // No actual change for this person — skip the write and the audit entry.
-        const unchanged =
-          finalRoles.length === previousRoles.length &&
-          finalRoles.every((r) => previousRoles.includes(r));
-        if (unchanged) {
-          return;
-        }
-
-        const code = buildRoleCodes(finalRoles);
-
-        if (existing) {
-          await medplum.updateResource({ ...existing, active: true, code });
-        } else if (finalRoles.length > 0) {
-          await medplum.createResource({
-            resourceType: 'PractitionerRole',
-            active: true,
-            practitioner: { reference: practitionerRef },
-            code,
-          });
-        }
-
-        try {
-          await createRoleChangeAuditEvent(
-            medplum,
-            practitionerRef,
-            name,
-            previousRoles,
-            finalRoles,
-            bulkRoleReason ?? undefined,
-            bulkRoleNotes
-          );
-        } catch (err) {
-          console.error('Failed to record role-change audit event for', name, err);
-        }
-      })
-    );
-    closeBulkRoleModal();
-    setSelectedIds(new Set());
-    await loadData();
-  } catch (err) {
-    console.error('Bulk role assignment failed', err);
-    setActionError('Bulk role assignment failed partway through. Check the console and verify affected accounts.');
-  } finally {
-    setBulkRoleSubmitting(false);
+  function closeBulkRoleModal(): void {
+    setBulkRoleModalOpen(false);
   }
-}
+
+  async function submitBulkRoleAssignment(): Promise<void> {
+    if (bulkRoles.length === 0) {
+      return;
+    }
+    setBulkRoleSubmitting(true);
+    setActionError(null);
+    try {
+      await Promise.all(
+        selectedPractitioners.map(async (p) => {
+          const practitionerId = p.id;
+          if (!practitionerId) return;
+
+          const existing = findRole(p);
+          const previousRoles = getRoleValues(existing);
+          const name = `${p.name?.[0]?.given?.join(' ') ?? ''} ${p.name?.[0]?.family ?? ''}`.trim() || '(unnamed)';
+          const practitionerRef = `Practitioner/${practitionerId}`;
+
+          let finalRoles: RoleValue[];
+          if (bulkRoleAction === 'replace') {
+            finalRoles = bulkRoles;
+          } else if (bulkRoleAction === 'add') {
+            finalRoles = Array.from(new Set([...previousRoles, ...bulkRoles]));
+          } else {
+            finalRoles = previousRoles.filter((r) => !bulkRoles.includes(r));
+          }
+
+          const unchanged =
+            finalRoles.length === previousRoles.length && finalRoles.every((r) => previousRoles.includes(r));
+          if (unchanged) return;
+
+          const code = buildRoleCodes(finalRoles);
+
+          if (existing) {
+            await medplum.updateResource({ ...existing, code });
+          } else if (finalRoles.length > 0) {
+            await medplum.createResource({
+              resourceType: 'PractitionerRole',
+              active: true,
+              practitioner: { reference: practitionerRef },
+              code,
+            });
+          }
+
+          try {
+            await createRoleChangeAuditEvent(
+              medplum,
+              practitionerRef,
+              name,
+              previousRoles,
+              finalRoles,
+              bulkRoleReason ?? undefined,
+              bulkRoleNotes
+            );
+          } catch (err) {
+            console.error('Failed to record role-change audit event for', name, err);
+          }
+        })
+      );
+      closeBulkRoleModal();
+      setSelectedIds(new Set());
+      await loadData();
+    } catch (err) {
+      console.error('Bulk role assignment failed', err);
+      setActionError('Bulk role assignment failed partway through. Check the console and verify affected accounts.');
+    } finally {
+      setBulkRoleSubmitting(false);
+    }
+  }
+
+  // --- Bulk department assignment ---
+
+  function openBulkDeptModal(): void {
+    setBulkDeptAction('replace');
+    setBulkDeptLocationIds([]);
+    setBulkDeptReason(null);
+    setBulkDeptNotes('');
+    setBulkDeptConfirmText('');
+    setBulkDeptModalOpen(true);
+  }
+
+  function closeBulkDeptModal(): void {
+    setBulkDeptModalOpen(false);
+  }
+
+  async function submitBulkDeptAssignment(): Promise<void> {
+    if (bulkDeptLocationIds.length === 0) {
+      return;
+    }
+    setBulkDeptSubmitting(true);
+    setActionError(null);
+    try {
+      await Promise.all(
+        selectedPractitioners.map(async (p) => {
+          const practitionerId = p.id;
+          if (!practitionerId) return;
+
+          const existing = findRole(p);
+          const previousLocationIds =
+            existing?.location?.map((ref) => ref.reference?.replace('Location/', '') ?? '').filter(Boolean) ?? [];
+          const name = `${p.name?.[0]?.given?.join(' ') ?? ''} ${p.name?.[0]?.family ?? ''}`.trim() || '(unnamed)';
+          const practitionerRef = `Practitioner/${practitionerId}`;
+
+          let finalLocationIds: string[];
+          if (bulkDeptAction === 'replace') {
+            finalLocationIds = bulkDeptLocationIds;
+          } else if (bulkDeptAction === 'add') {
+            finalLocationIds = Array.from(new Set([...previousLocationIds, ...bulkDeptLocationIds]));
+          } else {
+            finalLocationIds = previousLocationIds.filter((id) => !bulkDeptLocationIds.includes(id));
+          }
+
+          const unchanged =
+            finalLocationIds.length === previousLocationIds.length &&
+            finalLocationIds.every((id) => previousLocationIds.includes(id));
+          if (unchanged) return;
+
+          const locationRefs = finalLocationIds.map((id) => ({ reference: `Location/${id}` }));
+
+          if (existing) {
+            await medplum.updateResource({ ...existing, location: locationRefs });
+          } else if (finalLocationIds.length > 0) {
+            await medplum.createResource({
+              resourceType: 'PractitionerRole',
+              active: true,
+              practitioner: { reference: practitionerRef },
+              location: locationRefs,
+            });
+          }
+
+          const previousNames = locations
+            .filter((l) => previousLocationIds.includes(l.id ?? ''))
+            .map((l) => l.name ?? '');
+          const newNames = locations.filter((l) => finalLocationIds.includes(l.id ?? '')).map((l) => l.name ?? '');
+
+          try {
+            await createLocationAssignmentAuditEvent(
+              medplum,
+              practitionerRef,
+              name,
+              previousNames,
+              newNames,
+              bulkDeptReason ?? undefined,
+              bulkDeptNotes
+            );
+          } catch (err) {
+            console.error('Failed to record department-assignment audit event for', name, err);
+          }
+        })
+      );
+      closeBulkDeptModal();
+      setSelectedIds(new Set());
+      await loadData();
+    } catch (err) {
+      console.error('Bulk department assignment failed', err);
+      setActionError('Bulk department assignment failed partway through. Check the console and verify affected accounts.');
+    } finally {
+      setBulkDeptSubmitting(false);
+    }
+  }
 
   // --- Bulk status change ---
 
@@ -418,7 +544,7 @@ async function submitBulkRoleAssignment(): Promise<void> {
 
     try {
       try {
-        await createStatusChangeAuditEvent(medplum,membership, name, newActiveState, reason, notes);
+        await createStatusChangeAuditEvent(medplum, membership, name, newActiveState, reason, notes);
       } catch (err) {
         console.error('Failed to record audit event', err);
         setActionError('Status was changed, but the audit record could not be saved. Check the console.');
@@ -436,6 +562,10 @@ async function submitBulkRoleAssignment(): Promise<void> {
   const bulkRoleConfirmPhrase = String(selectedPractitioners.length);
   const bulkRoleConfirmMatches = bulkRoleConfirmText.trim() === bulkRoleConfirmPhrase;
   const canConfirmBulkRole = Boolean(bulkRoleReason) && bulkRoles.length > 0 && bulkRoleConfirmMatches;
+
+  const bulkDeptConfirmPhrase = String(selectedPractitioners.length);
+  const bulkDeptConfirmMatches = bulkDeptConfirmText.trim() === bulkDeptConfirmPhrase;
+  const canConfirmBulkDept = Boolean(bulkDeptReason) && bulkDeptLocationIds.length > 0 && bulkDeptConfirmMatches;
 
   const isDeactivating = pendingToggle ? pendingToggle.membership.active !== false : false;
   const reasonOptions = isDeactivating ? DEACTIVATION_REASONS : REACTIVATION_REASONS;
@@ -494,6 +624,39 @@ async function submitBulkRoleAssignment(): Promise<void> {
               </Text>
             </Card>
           </SimpleGrid>
+          <Text fw={600} size="sm" c="dimmed" mt="xs">Hospital Overview</Text>
+            <SimpleGrid cols={{ base: 2, sm: 3 }} spacing="md">
+              <Card
+                withBorder
+                padding="md"
+                style={{ cursor: 'pointer' }}
+                onClick={() => navigate('/admin/organizations')}
+              >
+                <Text size="xs" c="dimmed">Organizations</Text>
+                <Text size="xl" fw={700}>{hospitalSummary.activeOrgs} / {hospitalSummary.totalOrgs}</Text>
+                <Text size="xs" c="dimmed">active</Text>
+              </Card>
+              <Card
+                withBorder
+                padding="md"
+                style={{ cursor: 'pointer' }}
+                onClick={() => navigate('/admin/locations')}
+              >
+                <Text size="xs" c="dimmed">Locations</Text>
+                <Text size="xl" fw={700}>{hospitalSummary.activeLocations} / {hospitalSummary.totalLocations}</Text>
+                <Text size="xs" c="dimmed">active</Text>
+              </Card>
+              <Card
+                withBorder
+                padding="md"
+                style={{ cursor: 'pointer' }}
+                onClick={() => navigate('/admin/appointments')}
+              >
+                <Text size="xs" c="dimmed">Appointments Today</Text>
+                <Text size="xl" fw={700}>{hospitalSummary.todaysAppointments}</Text>
+                <Text size="xs" c="dimmed">{hospitalSummary.totalAppointments} total on record</Text>
+              </Card>
+            </SimpleGrid>
 
           <Group gap="sm">
             <TextInput
@@ -553,6 +716,9 @@ async function submitBulkRoleAssignment(): Promise<void> {
               <Button size="xs" onClick={openBulkRoleModal}>
                 Assign Role
               </Button>
+              <Button size="xs" onClick={openBulkDeptModal}>
+                Assign Department
+              </Button>
               <Button size="xs" color="red" variant="light" onClick={() => openBulkStatusModal(true)}>
                 Deactivate Selected
               </Button>
@@ -590,6 +756,7 @@ async function submitBulkRoleAssignment(): Promise<void> {
               <Table.Th>Access</Table.Th>
               <Table.Th>Status</Table.Th>
               <Table.Th>Actions</Table.Th>
+              <Table.Th>Department</Table.Th>
             </Table.Tr>
           </Table.Thead>
           <Table.Tbody>
@@ -628,6 +795,17 @@ async function submitBulkRoleAssignment(): Promise<void> {
                       <Text c="dimmed" size="sm">
                         No role set
                       </Text>
+                    )}
+                  </Table.Td>
+                  <Table.Td>
+                    {findLocationNames(p).length > 0 ? (
+                      <Group gap={4}>
+                        {findLocationNames(p).map((n) => (
+                          <Badge key={n} color="cyan" variant="light">{n}</Badge>
+                        ))}
+                      </Group>
+                    ) : (
+                      <Text c="dimmed" size="sm">—</Text>
                     )}
                   </Table.Td>
                   <Table.Td>
@@ -777,7 +955,7 @@ async function submitBulkRoleAssignment(): Promise<void> {
             placeholder="Select one or more"
             data={ROLE_OPTIONS.map((r) => ({ value: r.value, label: r.label }))}
             value={bulkRoles}
-            onChange={setBulkRoles}
+            onChange={(vals) => setBulkRoles(vals as RoleValue[])}
             required
           />
 
@@ -818,6 +996,76 @@ async function submitBulkRoleAssignment(): Promise<void> {
               loading={bulkRoleSubmitting}
               onClick={() => {
                 submitBulkRoleAssignment().catch((err) => console.error(err));
+              }}
+            >
+              Apply to {selectedPractitioners.length}
+            </Button>
+          </Group>
+        </Stack>
+      </Modal>
+
+      {/* Bulk department assignment modal */}
+      <Modal
+        opened={bulkDeptModalOpen}
+        onClose={closeBulkDeptModal}
+        title={`Change department(s) for ${selectedPractitioners.length} staff member(s)`}
+        centered
+      >
+        <Stack>
+          <Select
+            label="Action"
+            data={[
+              { value: 'replace', label: 'Replace — set department(s) to exactly this list' },
+              { value: 'add', label: 'Add — keep existing, add these too' },
+              { value: 'remove', label: 'Remove — take these away, keep the rest' },
+            ]}
+            value={bulkDeptAction}
+            onChange={(v) => setBulkDeptAction((v as 'replace' | 'add' | 'remove') ?? 'replace')}
+          />
+
+          <MultiSelect
+            label="Department(s) / Unit(s)"
+            placeholder="Select one or more"
+            data={locations.map((l) => ({ value: l.id ?? '', label: l.name ?? 'Unnamed' }))}
+            value={bulkDeptLocationIds}
+            onChange={setBulkDeptLocationIds}
+            required
+          />
+
+          <Select
+            label="Reason"
+            placeholder="Select a reason"
+            data={DEPARTMENT_CHANGE_REASONS}
+            value={bulkDeptReason}
+            onChange={setBulkDeptReason}
+            required
+          />
+
+          <Textarea
+            label="Notes (optional)"
+            value={bulkDeptNotes}
+            onChange={(e) => setBulkDeptNotes(e.currentTarget.value)}
+            minRows={2}
+          />
+
+          <TextInput
+            label={
+              <>
+                Type <strong>{bulkDeptConfirmPhrase}</strong> (the number of accounts) to confirm
+              </>
+            }
+            placeholder={bulkDeptConfirmPhrase}
+            value={bulkDeptConfirmText}
+            onChange={(e) => setBulkDeptConfirmText(e.currentTarget.value)}
+          />
+
+          <Group justify="flex-end" mt="sm">
+            <Button variant="subtle" onClick={closeBulkDeptModal}>Cancel</Button>
+            <Button
+              disabled={!canConfirmBulkDept}
+              loading={bulkDeptSubmitting}
+              onClick={() => {
+                submitBulkDeptAssignment().catch((err) => console.error(err));
               }}
             >
               Apply to {selectedPractitioners.length}
