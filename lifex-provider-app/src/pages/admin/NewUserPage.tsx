@@ -21,6 +21,8 @@ import {
 } from '@mantine/core';
 import { useAdminAccess } from '../../hooks/useAdminAccess';
 import { useOrganizations } from '../../hooks/useOrganizations';
+import { useLocations } from '../../hooks/useLocations';
+import { createLocationAssignmentAuditEvent } from '../../utils/auditLog';
 import { ROLE_OPTIONS, ROLES_WITH_SPECIALTY, buildRoleCodes, roleLabel, type RoleValue } from '../../utils/practitionerRoles';
 import { resolveAccessPolicyForRoles, resolveHospitalAdminAccessPolicy } from '../../utils/accessPolicies';
 import { createRoleChangeAuditEvent } from '../../utils/auditLog';
@@ -49,6 +51,8 @@ export function NewUserPage(): JSX.Element {
   const [specialtyText, setSpecialtyText] = useState('');
   const [availabilityExceptions, setAvailabilityExceptions] = useState('');
   const showSpecialtyField = selectedRoles.some((r) => ROLES_WITH_SPECIALTY.has(r));
+  const { locations } = useLocations();
+  const [selectedLocationIds, setSelectedLocationIds] = useState<string[]>([]);
 
   // Set after the invite + PractitionerRole are actually created
   const [practitionerRef, setPractitionerRef] = useState<string | null>(null);
@@ -147,10 +151,22 @@ export function NewUserPage(): JSX.Element {
         active: true,
         practitioner: { reference: ref },
         organization: org?.id ? { reference: `Organization/${org.id}`, display: org.name } : undefined,
+        location: selectedLocationIds.length > 0
+          ? selectedLocationIds.map((id) => ({ reference: `Location/${id}` }))
+          : undefined,
         code: selectedRoles.length > 0 ? buildRoleCodes(selectedRoles) : undefined,
         specialty,
         availabilityExceptions: availabilityExceptions.trim() || undefined,
       });
+
+      if (selectedLocationIds.length > 0) {
+        const locationNames = locations.filter((l) => selectedLocationIds.includes(l.id ?? '')).map((l) => l.name ?? '');
+        try {
+          await createLocationAssignmentAuditEvent(medplum, ref, `${firstName.trim()} ${lastName.trim()}`, [], locationNames);
+        } catch (err) {
+          console.error('Failed to record department-assignment audit event', err);
+        }
+      }
 
       setPractitionerRole(createdRole);
       if (selectedRoles.length > 0) {
@@ -204,6 +220,20 @@ export function NewUserPage(): JSX.Element {
             value={selectedOrgId}
             onChange={setSelectedOrgId}
           />
+
+          {locations.length > 0 && (
+            <Card withBorder padding="sm">
+              <Text fw={600} size="sm" mb="xs">Department / Unit (optional)</Text>
+              <MultiSelect
+                placeholder="Select one or more"
+                data={locations
+                  .filter((l) => l.managingOrganization?.reference === `Organization/${selectedOrgId}`)
+                  .map((l) => ({ value: l.id ?? '', label: l.name ?? 'Unnamed' }))}
+                value={selectedLocationIds}
+                onChange={setSelectedLocationIds}
+              />
+            </Card>
+          )}
 
           <Card withBorder padding="sm">
             <Text fw={600} size="sm" mb="xs">Role</Text>
@@ -285,6 +315,12 @@ export function NewUserPage(): JSX.Element {
                     ? selectedRoles.map(roleLabel).join(', ')
                     : 'None set'}
               </List.Item>
+              {selectedLocationIds.length > 0 && (
+              <List.Item>
+                <strong>Department(s):</strong>{' '}
+                {locations.filter((l) => selectedLocationIds.includes(l.id ?? '')).map((l) => l.name).join(', ')}
+              </List.Item>
+            )}
               {!makeAdmin && specialtyText && <List.Item><strong>Specialty:</strong> {specialtyText}</List.Item>}
               {availabilityExceptions && (
                 <List.Item><strong>Availability exceptions:</strong> {availabilityExceptions}</List.Item>

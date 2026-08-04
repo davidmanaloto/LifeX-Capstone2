@@ -229,3 +229,57 @@ export async function createOrgStatusChangeAuditEvent(
     ],
   });
 }
+
+export const DEPARTMENT_CHANGE_REASONS = [
+  { value: 'new-assignment', label: 'New Assignment' },
+  { value: 'transfer', label: 'Department Transfer' },
+  { value: 'cross-coverage', label: 'Cross-coverage / Floating' },
+  { value: 'correction', label: 'Correction (was set in error)' },
+  { value: 'other', label: 'Other' },
+];
+
+export async function createLocationAssignmentAuditEvent(
+  medplum: MedplumClient,
+  practitionerRef: string,
+  name: string,
+  previousLocations: string[],
+  newLocations: string[],
+  reasonValue?: string,
+  notesValue?: string
+): Promise<void> {
+  const currentProfile = medplum.getProfile();
+  const previousLabel = previousLocations.length > 0 ? previousLocations.join(', ') : 'None';
+  const newLabel = newLocations.length > 0 ? newLocations.join(', ') : 'None';
+  const reasonLabel = reasonValue
+    ? DEPARTMENT_CHANGE_REASONS.find((r) => r.value === reasonValue)?.label ?? reasonValue
+    : undefined;
+
+  await medplum.createResource({
+    resourceType: 'AuditEvent',
+    type: {
+      system: 'https://lifex-provider.app/fhir/audit-event-type',
+      code: 'user-department-change',
+      display: 'User Department/Unit Assignment Change',
+    },
+    action: 'U',
+    recorded: new Date().toISOString(),
+    outcome: '0',
+    outcomeDesc: `Changed ${name}'s department/unit assignment from "${previousLabel}" to "${newLabel}".${reasonLabel ? ` Reason: ${reasonLabel}.` : ''}${notesValue ? ` Notes: ${notesValue}` : ''}`,
+    agent: currentProfile
+      ? [{ who: { reference: getReferenceString(currentProfile) }, requestor: true }]
+      : [],
+    source: { observer: { display: 'LifeX Provider App' } },
+    entity: [
+      {
+        what: { reference: practitionerRef },
+        name,
+        detail: [
+          { type: 'previousLocations', valueString: previousLabel },
+          { type: 'newLocations', valueString: newLabel },
+          ...(reasonLabel ? [{ type: 'reason', valueString: reasonLabel }] : []),
+          ...(notesValue ? [{ type: 'notes', valueString: notesValue }] : []),
+        ],
+      },
+    ],
+  });
+}
