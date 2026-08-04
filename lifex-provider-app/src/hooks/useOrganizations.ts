@@ -21,7 +21,7 @@ export function useOrganizations(): UseOrganizationsResult {
 
   const reload = useCallback(async (): Promise<void> => {
     setLoading(true);
-    const results = await medplum.searchResources('Organization');
+    const results = await medplum.searchResources('Organization', {_count: 100});
     setOrganizations(results);
     setLoading(false);
   }, [medplum]);

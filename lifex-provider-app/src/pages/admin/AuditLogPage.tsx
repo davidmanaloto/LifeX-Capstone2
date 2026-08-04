@@ -28,7 +28,7 @@ export function AuditLogPage(): JSX.Element {
     async function load(): Promise<void> {
       try {
         const results = await medplum.searchResources('AuditEvent', {
-          type: 'https://lifex-provider.app/fhir/audit-event-type|user-status-change,https://lifex-provider.app/fhir/audit-event-type|user-role-change',
+          type: 'https://lifex-provider.app/fhir/audit-event-type|user-status-change,https://lifex-provider.app/fhir/audit-event-type|user-role-change,https://lifex-provider.app/fhir/audit-event-type|org-status-change',
           _sort: '-_lastUpdated',
           _count: 100,
         });
@@ -121,9 +121,9 @@ export function AuditLogPage(): JSX.Element {
               </Table.Tr>
             </Table.Thead>
             <Table.Tbody>
-              {paginatedEvents.map((event) => {
+              {events.map((event) => {
                 const targetName = event.entity?.[0]?.name ?? '—';
-                const isRoleChange = event.type?.code === 'user-role-change';
+                const eventCode = event.type?.code;
                 const actorRef = event.agent?.[0]?.who?.reference;
                 const actorName = actorRef ? (actorNames[actorRef] ?? actorRef) : '—';
 
@@ -132,8 +132,12 @@ export function AuditLogPage(): JSX.Element {
                     <Table.Td>{event.recorded ? new Date(event.recorded).toLocaleString() : '—'}</Table.Td>
                     <Table.Td>{targetName}</Table.Td>
                     <Table.Td>
-                      {isRoleChange ? (
+                      {eventCode === 'user-role-change' ? (
                         <Badge color="blue" variant="light">Role Changed</Badge>
+                      ) : eventCode === 'org-status-change' ? (
+                        <Badge color="grape" variant="light">
+                          {getDetail(event, 'newStatus') === 'active' ? 'Org Reactivated' : 'Org Deactivated'}
+                        </Badge>
                       ) : getDetail(event, 'newStatus') === 'active' ? (
                         <Badge color="green" variant="light">Reactivated</Badge>
                       ) : (
@@ -141,7 +145,7 @@ export function AuditLogPage(): JSX.Element {
                       )}
                     </Table.Td>
                     <Table.Td>
-                      {isRoleChange ? `${getDetail(event, 'previousRoles')} → ${getDetail(event, 'newRoles')}` : '—'}
+                      {eventCode === 'user-role-change' ? `${getDetail(event, 'previousRoles')} → ${getDetail(event, 'newRoles')}` : '—'}
                     </Table.Td>
                     <Table.Td>{getDetail(event, 'reason') ?? '—'}</Table.Td>
                     <Table.Td>{getDetail(event, 'notes') ?? '—'}</Table.Td>

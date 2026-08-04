@@ -6,9 +6,11 @@ import { AppShell, Loading, Logo, useMedplum, useMedplumProfile } from '@medplum
 import {
   IconApps,
   IconBook2,
+  IconBuildingHospital,
   IconCalendarEvent,
   IconClipboardCheck,
   IconMail,
+  IconMapPin,
   IconPill,
   IconPrinter,
   IconQrcode,
@@ -30,6 +32,9 @@ import './index.css';
 const SETUP_DISMISSED_KEY = 'medplum-provider-setup-completed';
 const PROVIDER_HIDE_GET_STARTED_SETTING = 'hideGetStarted';
 
+import { AppointmentOversightPage } from './pages/AppointmentOversightPage';
+import { LocationDashboard } from './pages/LocationDashboard';
+import { OrganizationDashboard } from './pages/OrganizationDashboard';
 import { AuditLogPage } from './pages/admin/AuditLogPage';
 import { NewUserPage } from './pages/admin/NewUserPage';
 import { AdminDashboard } from './pages/AdminDashboard';
@@ -118,6 +123,8 @@ export function App(): JSX.Element | null {
                   ...(!isAdmin
                     ? [{ icon: <IconCalendarEvent />, label: 'Schedule', href: `/Calendar/Schedule` }]
                     : []),
+                  { icon: <IconMapPin />, label: 'Locations', href: '/admin/locations' },
+                  { icon: <IconCalendarEvent />, label: 'Appointments', href: '/admin/appointments' },
                   {
                     icon: <IconMail />,
                     label: 'Messages',
@@ -139,6 +146,7 @@ export function App(): JSX.Element | null {
                       subscriptionCriteria: `Task?owner=${getReferenceString(profile)}&status=requested,ready,received,accepted,in-progress,draft`,
                     },
                   },
+                  { icon: <IconBuildingHospital />, label: 'Organizations', href: '/admin/organizations' },
                   ...(!isDoctor && !isNurse && !isAdmin
                     ? [{ icon: <IconPrinter />, label: 'Faxes', href: '/Fax/Communication' }]
                     : []),
@@ -215,6 +223,9 @@ export function App(): JSX.Element | null {
               <Route path="/admin" element={<AdminDashboard />} />
               <Route path="/admin/new-user" element={<NewUserPage />} />
               <Route path="/admin/audit-log" element={<AuditLogPage />} />
+              <Route path="/admin/locations" element={<LocationDashboard />} />
+              <Route path="/admin/appointments" element={<AppointmentOversightPage />} />
+              <Route path="/admin/organizations" element={<OrganizationDashboard />} />
               <Route path="/Spaces/Communication" element={<SpacesPage />}>
                 <Route index element={<SpacesPage />} />
                 <Route path=":topicId" element={<SpacesPage />} />

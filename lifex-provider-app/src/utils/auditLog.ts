@@ -115,3 +115,117 @@ export async function createRoleChangeAuditEvent(
     ],
   });
 }
+
+export const LOCATION_DEACTIVATION_REASONS = [
+  { value: 'closed', label: 'Closed / Decommissioned' },
+  { value: 'renovation', label: 'Under Renovation' },
+  { value: 'duplicate', label: 'Duplicate Entry' },
+  { value: 'other', label: 'Other' },
+];
+
+export const LOCATION_REACTIVATION_REASONS = [
+  { value: 'reopened', label: 'Reopened' },
+  { value: 'renovation-complete', label: 'Renovation Complete' },
+  { value: 'correction', label: 'Correction (was deactivated in error)' },
+  { value: 'other', label: 'Other' },
+];
+
+export async function createLocationStatusChangeAuditEvent(
+  medplum: MedplumClient,
+  locationId: string,
+  name: string,
+  newStatus: 'active' | 'inactive',
+  reasonValue: string,
+  notesValue: string
+): Promise<void> {
+  const currentProfile = medplum.getProfile();
+  const reasonLabel =
+    (newStatus === 'active' ? LOCATION_REACTIVATION_REASONS : LOCATION_DEACTIVATION_REASONS).find(
+      (r) => r.value === reasonValue
+    )?.label ?? reasonValue;
+
+  await medplum.createResource({
+    resourceType: 'AuditEvent',
+    type: {
+      system: 'https://lifex-provider.app/fhir/audit-event-type',
+      code: 'location-status-change',
+      display: 'Location Status Change',
+    },
+    action: 'U',
+    recorded: new Date().toISOString(),
+    outcome: '0',
+    outcomeDesc: `${newStatus === 'active' ? 'Reactivated' : 'Deactivated'} location "${name}". Reason: ${reasonLabel}.${notesValue ? ` Notes: ${notesValue}` : ''}`,
+    agent: currentProfile
+      ? [{ who: { reference: getReferenceString(currentProfile) }, requestor: true }]
+      : [],
+    source: { observer: { display: 'LifeX Provider App' } },
+    entity: [
+      {
+        what: { reference: `Location/${locationId}` },
+        name,
+        detail: [
+          { type: 'reason', valueString: reasonLabel },
+          ...(notesValue ? [{ type: 'notes', valueString: notesValue }] : []),
+          { type: 'newStatus', valueString: newStatus },
+        ],
+      },
+    ],
+  });
+}
+
+export const ORG_DEACTIVATION_REASONS = [
+  { value: 'closed', label: 'Closed / Ceased Operations' },
+  { value: 'merged', label: 'Merged with Another Facility' },
+  { value: 'temporary-suspension', label: 'Temporary Suspension' },
+  { value: 'duplicate', label: 'Duplicate Entry' },
+  { value: 'other', label: 'Other' },
+];
+
+export const ORG_REACTIVATION_REASONS = [
+  { value: 'reopened', label: 'Reopened' },
+  { value: 'suspension-lifted', label: 'Suspension Lifted' },
+  { value: 'correction', label: 'Correction (was deactivated in error)' },
+  { value: 'other', label: 'Other' },
+];
+
+export async function createOrgStatusChangeAuditEvent(
+  medplum: MedplumClient,
+  organizationId: string,
+  name: string,
+  newActiveState: boolean,
+  reasonValue: string,
+  notesValue: string
+): Promise<void> {
+  const currentProfile = medplum.getProfile();
+  const reasonLabel =
+    (newActiveState ? ORG_REACTIVATION_REASONS : ORG_DEACTIVATION_REASONS).find((r) => r.value === reasonValue)
+      ?.label ?? reasonValue;
+
+  await medplum.createResource({
+    resourceType: 'AuditEvent',
+    type: {
+      system: 'https://lifex-provider.app/fhir/audit-event-type',
+      code: 'org-status-change',
+      display: 'Organization Status Change',
+    },
+    action: 'U',
+    recorded: new Date().toISOString(),
+    outcome: '0',
+    outcomeDesc: `${newActiveState ? 'Reactivated' : 'Deactivated'} organization "${name}". Reason: ${reasonLabel}.${notesValue ? ` Notes: ${notesValue}` : ''}`,
+    agent: currentProfile
+      ? [{ who: { reference: getReferenceString(currentProfile) }, requestor: true }]
+      : [],
+    source: { observer: { display: 'LifeX Provider App' } },
+    entity: [
+      {
+        what: { reference: `Organization/${organizationId}` },
+        name,
+        detail: [
+          { type: 'reason', valueString: reasonLabel },
+          ...(notesValue ? [{ type: 'notes', valueString: notesValue }] : []),
+          { type: 'newStatus', valueString: newActiveState ? 'active' : 'inactive' },
+        ],
+      },
+    ],
+  });
+}
