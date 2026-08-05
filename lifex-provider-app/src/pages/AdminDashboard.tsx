@@ -33,7 +33,6 @@ import { useNavigate } from 'react-router';
 import {
   createLocationAssignmentAuditEvent,
   createStatusChangeAuditEvent,
-  createRoleChangeAuditEvent,
   DEACTIVATION_REASONS,
   REACTIVATION_REASONS,
   ROLE_CHANGE_REASONS,
@@ -48,6 +47,7 @@ import {
   ROLE_OPTIONS,
   type RoleValue,
 } from '../utils/practitionerRoles';
+import { syncAccessPolicyAndLogRoleChange } from '../utils/accessPolicies';
 
 interface PendingToggle {
   membership: ProjectMembership;
@@ -322,19 +322,17 @@ export function AdminDashboard(): JSX.Element {
             });
           }
 
-          try {
-            await createRoleChangeAuditEvent(
-              medplum,
-              practitionerRef,
-              name,
-              previousRoles,
-              finalRoles,
-              bulkRoleReason ?? undefined,
-              bulkRoleNotes
-            );
-          } catch (err) {
-            console.error('Failed to record role-change audit event for', name, err);
-          }
+          const membership = findMembership(p);
+          await syncAccessPolicyAndLogRoleChange(
+            medplum,
+            membership,
+            practitionerRef,
+            name,
+            previousRoles,
+            finalRoles,
+            bulkRoleReason ?? undefined,
+            bulkRoleNotes
+          );
         })
       );
       closeBulkRoleModal();
@@ -780,7 +778,15 @@ export function AdminDashboard(): JSX.Element {
                       onChange={() => p.id && toggleSelected(p.id)}
                     />
                   </Table.Td>
-                  <Table.Td>{displayName || '—'}</Table.Td>
+                  <Table.Td>
+                    <Text
+                      style={{ cursor: 'pointer' }}
+                      c="blue"
+                      onClick={() => p.id && navigate(`/admin/staff/${p.id}`)}
+                    >
+                      {displayName || '—'}
+                    </Text>
+                  </Table.Td>
                   <Table.Td>{email ?? '—'}</Table.Td>
                   <Table.Td>
                     {roleValues.length > 0 ? (

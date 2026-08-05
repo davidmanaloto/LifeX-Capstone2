@@ -31,7 +31,7 @@ export function AuditLogPage(): JSX.Element {
     async function load(): Promise<void> {
       try {
         const results = await medplum.searchResources('AuditEvent', {
-          type: 'https://lifex-provider.app/fhir/audit-event-type|user-status-change,https://lifex-provider.app/fhir/audit-event-type|user-role-change,https://lifex-provider.app/fhir/audit-event-type|org-status-change,https://lifex-provider.app/fhir/audit-event-type|location-status-change,https://lifex-provider.app/fhir/audit-event-type|user-department-change',
+          type: 'https://lifex-provider.app/fhir/audit-event-type|user-status-change,https://lifex-provider.app/fhir/audit-event-type|user-role-change,https://lifex-provider.app/fhir/audit-event-type|org-status-change,https://lifex-provider.app/fhir/audit-event-type|location-status-change,https://lifex-provider.app/fhir/audit-event-type|user-department-change,https://lifex-provider.app/fhir/audit-event-type|user-info-change',
           _sort: '-_lastUpdated',
           _count: 100,
         });
@@ -110,13 +110,15 @@ export function AuditLogPage(): JSX.Element {
           ? 'Role Changed'
           : eventCode === 'user-department-change'
             ? 'Department Changed'
-            : eventCode === 'org-status-change'
-              ? (getDetail(event, 'newStatus') === 'active' ? 'Org Reactivated' : 'Org Deactivated')
-              : eventCode === 'location-status-change'
-                ? (getDetail(event, 'newStatus') === 'active' ? 'Location Reactivated' : 'Location Deactivated')
-                : getDetail(event, 'newStatus') === 'active'
-                  ? 'Reactivated'
-                  : 'Deactivated';
+            : eventCode === 'user-info-change'
+              ? 'Info Updated'
+              : eventCode === 'org-status-change'
+                ? (getDetail(event, 'newStatus') === 'active' ? 'Org Reactivated' : 'Org Deactivated')
+                : eventCode === 'location-status-change'
+                  ? (getDetail(event, 'newStatus') === 'active' ? 'Location Reactivated' : 'Location Deactivated')
+                  : getDetail(event, 'newStatus') === 'active'
+                    ? 'Reactivated'
+                    : 'Deactivated';
 
       const details =
         eventCode === 'user-role-change'
@@ -125,13 +127,18 @@ export function AuditLogPage(): JSX.Element {
             ? `${getDetail(event, 'previousLocations')} -> ${getDetail(event, 'newLocations')}`
             : '';
 
+      const notes =
+        eventCode === 'user-info-change'
+          ? getDetail(event, 'changedFields') ?? ''
+          : getDetail(event, 'notes') ?? '';
+
       return [
         event.recorded ? new Date(event.recorded).toLocaleString() : '',
         targetName,
         changeLabel,
         details,
         getDetail(event, 'reason') ?? '',
-        getDetail(event, 'notes') ?? '',
+        notes,
         actorName,
       ];
     });
@@ -249,6 +256,8 @@ export function AuditLogPage(): JSX.Element {
                         <Badge color="blue" variant="light">Role Changed</Badge>
                       ) : eventCode === 'user-department-change' ? (
                         <Badge color="cyan" variant="light">Department Changed</Badge>
+                      ) : eventCode === 'user-info-change' ? (
+                        <Badge color="gray" variant="light">Info Updated</Badge>
                       ) : eventCode === 'org-status-change' ? (
                         <Badge color="grape" variant="light">
                           {getDetail(event, 'newStatus') === 'active' ? 'Org Reactivated' : 'Org Deactivated'}
@@ -271,7 +280,11 @@ export function AuditLogPage(): JSX.Element {
                           : '—'}
                     </Table.Td>
                     <Table.Td>{getDetail(event, 'reason') ?? '—'}</Table.Td>
-                    <Table.Td>{getDetail(event, 'notes') ?? '—'}</Table.Td>
+                    <Table.Td>
+                      {eventCode === 'user-info-change'
+                        ? getDetail(event, 'changedFields') ?? '—'
+                        : getDetail(event, 'notes') ?? '—'}
+                    </Table.Td>
                     <Table.Td>{actorName}</Table.Td>
                   </Table.Tr>
                 );

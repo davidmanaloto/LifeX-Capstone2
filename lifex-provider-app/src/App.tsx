@@ -26,6 +26,7 @@ import { TaskDetailsModal } from './components/tasks/TaskDetailsModal';
 import { hasScriptSureIdentifier } from './components/utils';
 import { useAdminAccess } from './hooks/useAdminAccess';
 import { usePractitionerRoles } from './hooks/usePractitionerRoles';
+import { StaffDetailPage } from './pages/StaffDetailPage';
 import { useDoseSpotAccess } from './hooks/useDoseSpotAccess';
 import './index.css';
 
@@ -226,6 +227,7 @@ export function App(): JSX.Element | null {
               <Route path="/admin/locations" element={<LocationDashboard />} />
               <Route path="/admin/appointments" element={<AppointmentOversightPage />} />
               <Route path="/admin/organizations" element={<OrganizationDashboard />} />
+              <Route path="/admin/staff/:practitionerId" element={<StaffDetailPage />} />
               <Route path="/Spaces/Communication" element={<SpacesPage />}>
                 <Route index element={<SpacesPage />} />
                 <Route path=":topicId" element={<SpacesPage />} />

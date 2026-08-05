@@ -2,6 +2,11 @@ import type { MedplumClient } from '@medplum/core';
 import { getReferenceString } from '@medplum/core';
 import type { ProjectMembership } from '@medplum/fhirtypes';
 import { roleLabel, type RoleValue } from './practitionerRoles';
+import type { AuditEvent } from '@medplum/fhirtypes';
+
+export function getAuditEventDetail(event: AuditEvent, type: string): string | undefined {
+  return event.entity?.[0]?.detail?.find((d) => d.type === type)?.valueString;
+}
 
 const DEACTIVATION_REASONS = [
   { value: 'resigned', label: 'Resigned' },
@@ -279,6 +284,39 @@ export async function createLocationAssignmentAuditEvent(
           ...(reasonLabel ? [{ type: 'reason', valueString: reasonLabel }] : []),
           ...(notesValue ? [{ type: 'notes', valueString: notesValue }] : []),
         ],
+      },
+    ],
+  });
+}
+
+export async function createStaffInfoChangeAuditEvent(
+  medplum: MedplumClient,
+  practitionerRef: string,
+  name: string,
+  changedFields: string[]
+): Promise<void> {
+  const currentProfile = medplum.getProfile();
+
+  await medplum.createResource({
+    resourceType: 'AuditEvent',
+    type: {
+      system: 'https://lifex-provider.app/fhir/audit-event-type',
+      code: 'user-info-change',
+      display: 'User Info Change',
+    },
+    action: 'U',
+    recorded: new Date().toISOString(),
+    outcome: '0',
+    outcomeDesc: `Updated ${name}'s profile info (${changedFields.join(', ')}).`,
+    agent: currentProfile
+      ? [{ who: { reference: getReferenceString(currentProfile) }, requestor: true }]
+      : [],
+    source: { observer: { display: 'LifeX Provider App' } },
+    entity: [
+      {
+        what: { reference: practitionerRef },
+        name,
+        detail: changedFields.map((field) => ({ type: 'changedField', valueString: field })),
       },
     ],
   });
