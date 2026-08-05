@@ -21,7 +21,6 @@ import {
   Select,
   MultiSelect,
   Textarea,
-  Checkbox,
   Paper,
 } from '@mantine/core';
 import { IconAlertTriangle, IconSearch } from '@tabler/icons-react';
@@ -49,11 +48,6 @@ import {
 } from '../utils/practitionerRoles';
 import { syncAccessPolicyAndLogRoleChange } from '../utils/accessPolicies';
 
-interface PendingToggle {
-  membership: ProjectMembership;
-  name: string;
-}
-
 interface BulkStatusTarget {
   membership: ProjectMembership;
   name: string;
@@ -71,12 +65,6 @@ export function AdminDashboard(): JSX.Element {
   const [roles, setRoles] = useState<PractitionerRole[]>([]);
   const [loading, setLoading] = useState(true);
   const [actionError, setActionError] = useState<string | null>(null);
-  const [busyMembershipId, setBusyMembershipId] = useState<string | null>(null);
-
-  const [pendingToggle, setPendingToggle] = useState<PendingToggle | null>(null);
-  const [reason, setReason] = useState<string | null>(null);
-  const [notes, setNotes] = useState('');
-  const [confirmText, setConfirmText] = useState('');
 
   const [searchQuery, setSearchQuery] = useState('');
   const [roleFilter, setRoleFilter] = useState<string>('all');
@@ -242,24 +230,6 @@ export function AdminDashboard(): JSX.Element {
   function findRole(practitioner: Practitioner): PractitionerRole | undefined {
     const practitionerRef = getReferenceString(practitioner);
     return roles.find((r) => r.practitioner?.reference === practitionerRef);
-  }
-
-  function toggleSelected(id: string): void {
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) {
-        next.delete(id);
-      } else {
-        next.add(id);
-      }
-      return next;
-    });
-  }
-
-  function toggleSelectAll(): void {
-    const allVisibleIds = filteredPractitioners.map((p) => p.id).filter((id): id is string => Boolean(id));
-    const allSelected = allVisibleIds.length > 0 && allVisibleIds.every((id) => selectedIds.has(id));
-    setSelectedIds(allSelected ? new Set() : new Set(allVisibleIds));
   }
 
   const selectedPractitioners = filteredPractitioners.filter((p) => p.id && selectedIds.has(p.id));
@@ -512,51 +482,6 @@ export function AdminDashboard(): JSX.Element {
     }
   }
 
-  // --- Single-row status change (unchanged behavior) ---
-
-  function requestToggleActive(membership: ProjectMembership, name: string): void {
-    setPendingToggle({ membership, name });
-    setReason(null);
-    setNotes('');
-    setConfirmText('');
-  }
-
-  function closeModal(): void {
-    setPendingToggle(null);
-    setReason(null);
-    setNotes('');
-    setConfirmText('');
-  }
-
-  async function confirmToggleActive(): Promise<void> {
-    if (!pendingToggle || !reason) {
-      return;
-    }
-    const { membership, name } = pendingToggle;
-    const isCurrentlyActive = membership.active !== false;
-    const newActiveState = !isCurrentlyActive;
-
-    closeModal();
-    setBusyMembershipId(membership.id ?? null);
-    setActionError(null);
-
-    try {
-      try {
-        await createStatusChangeAuditEvent(medplum, membership, name, newActiveState, reason, notes);
-      } catch (err) {
-        console.error('Failed to record audit event', err);
-        setActionError('Status was changed, but the audit record could not be saved. Check the console.');
-      }
-      await patchMembershipActive(membership, newActiveState);
-      await loadData();
-    } catch (err) {
-      console.error('Failed to update membership', err);
-      setActionError('That action failed. Check the console for details.');
-    } finally {
-      setBusyMembershipId(null);
-    }
-  }
-
   const bulkRoleConfirmPhrase = String(selectedPractitioners.length);
   const bulkRoleConfirmMatches = bulkRoleConfirmText.trim() === bulkRoleConfirmPhrase;
   const canConfirmBulkRole = Boolean(bulkRoleReason) && bulkRoles.length > 0 && bulkRoleConfirmMatches;
@@ -565,19 +490,10 @@ export function AdminDashboard(): JSX.Element {
   const bulkDeptConfirmMatches = bulkDeptConfirmText.trim() === bulkDeptConfirmPhrase;
   const canConfirmBulkDept = Boolean(bulkDeptReason) && bulkDeptLocationIds.length > 0 && bulkDeptConfirmMatches;
 
-  const isDeactivating = pendingToggle ? pendingToggle.membership.active !== false : false;
-  const reasonOptions = isDeactivating ? DEACTIVATION_REASONS : REACTIVATION_REASONS;
-  const nameMatches = pendingToggle ? confirmText.trim() === pendingToggle.name.trim() : false;
-  const canConfirm = isDeactivating ? Boolean(reason) && nameMatches : Boolean(reason);
-
   const bulkReasonOptions = bulkStatusDeactivating ? DEACTIVATION_REASONS : REACTIVATION_REASONS;
   const bulkConfirmPhrase = bulkStatusTargets ? String(bulkStatusTargets.length) : '';
   const bulkConfirmMatches = bulkConfirmText.trim() === bulkConfirmPhrase;
   const canConfirmBulk = Boolean(bulkReason) && bulkConfirmMatches;
-
-  const allVisibleIds = filteredPractitioners.map((p) => p.id).filter((id): id is string => Boolean(id));
-  const allVisibleSelected = allVisibleIds.length > 0 && allVisibleIds.every((id) => selectedIds.has(id));
-  const someVisibleSelected = allVisibleIds.some((id) => selectedIds.has(id));
 
   return (
     <Container size="lg">
@@ -704,32 +620,62 @@ export function AdminDashboard(): JSX.Element {
         </Stack>
       )}
 
-      {selectedIds.size > 0 && (
-        <Paper withBorder p="sm" mb="md" bg="var(--mantine-color-blue-0)">
-          <Group justify="space-between">
-            <Text size="sm" fw={500}>
+      <Paper withBorder p="sm" mb="md">
+        <Group gap="sm" wrap="wrap">
+          <MultiSelect
+            placeholder="Make a selection"
+            data={filteredPractitioners.map((p) => ({
+              value: p.id ?? '',
+              label:
+                `${p.name?.[0]?.given?.join(' ') ?? ''} ${p.name?.[0]?.family ?? ''}`.trim() || '(unnamed)',
+            }))}
+            value={Array.from(selectedIds)}
+            onChange={(vals) => setSelectedIds(new Set(vals))}
+            searchable
+            clearable
+            w={260}
+          />
+
+          <Button size="xs" onClick={openBulkRoleModal} disabled={selectedIds.size === 0}>
+            Assign Role
+          </Button>
+          <Button size="xs" onClick={openBulkDeptModal} disabled={selectedIds.size === 0}>
+            Assign Department
+          </Button>
+          <Button
+            size="xs"
+            color="red"
+            variant="light"
+            onClick={() => openBulkStatusModal(true)}
+            disabled={selectedIds.size === 0}
+          >
+            Deactivate
+          </Button>
+          <Button
+            size="xs"
+            color="green"
+            variant="light"
+            onClick={() => openBulkStatusModal(false)}
+            disabled={selectedIds.size === 0}
+          >
+            Reactivate
+          </Button>
+          <Button
+            size="xs"
+            variant="subtle"
+            onClick={() => setSelectedIds(new Set())}
+            disabled={selectedIds.size === 0}
+          >
+            Clear
+          </Button>
+
+          {selectedIds.size > 0 && (
+            <Text size="xs" c="dimmed" ml="auto">
               {selectedIds.size} selected
             </Text>
-            <Group gap="xs">
-              <Button size="xs" onClick={openBulkRoleModal}>
-                Assign Role
-              </Button>
-              <Button size="xs" onClick={openBulkDeptModal}>
-                Assign Department
-              </Button>
-              <Button size="xs" color="red" variant="light" onClick={() => openBulkStatusModal(true)}>
-                Deactivate Selected
-              </Button>
-              <Button size="xs" color="green" variant="light" onClick={() => openBulkStatusModal(false)}>
-                Reactivate Selected
-              </Button>
-              <Button size="xs" variant="subtle" onClick={() => setSelectedIds(new Set())}>
-                Clear
-              </Button>
-            </Group>
-          </Group>
-        </Paper>
-      )}
+          )}
+        </Group>
+      </Paper>
 
       {filteredPractitioners.length === 0 ? (
         <Text c="dimmed">
@@ -741,20 +687,12 @@ export function AdminDashboard(): JSX.Element {
         <Table striped highlightOnHover>
           <Table.Thead>
             <Table.Tr>
-              <Table.Th w={40}>
-                <Checkbox
-                  checked={allVisibleSelected}
-                  indeterminate={someVisibleSelected && !allVisibleSelected}
-                  onChange={toggleSelectAll}
-                />
-              </Table.Th>
               <Table.Th>Name</Table.Th>
               <Table.Th>Email</Table.Th>
               <Table.Th>Role</Table.Th>
+              <Table.Th>Department</Table.Th>
               <Table.Th>Access</Table.Th>
               <Table.Th>Status</Table.Th>
-              <Table.Th>Actions</Table.Th>
-              <Table.Th>Department</Table.Th>
             </Table.Tr>
           </Table.Thead>
           <Table.Tbody>
@@ -766,18 +704,9 @@ export function AdminDashboard(): JSX.Element {
               const displayName = `${p.name?.[0]?.given?.join(' ') ?? ''} ${p.name?.[0]?.family ?? ''}`.trim();
               const isSelf = membership?.id && ownMembership?.id && membership.id === ownMembership.id;
               const isActive = membership?.active !== false;
-              const isBusy = busyMembershipId === membership?.id;
-              const isChecked = Boolean(p.id && selectedIds.has(p.id));
 
               return (
-                <Table.Tr key={p.id} bg={isChecked ? 'var(--mantine-color-blue-0)' : undefined}>
-                  <Table.Td>
-                    <Checkbox
-                      checked={isChecked}
-                      disabled={Boolean(isSelf)}
-                      onChange={() => p.id && toggleSelected(p.id)}
-                    />
-                  </Table.Td>
+                <Table.Tr key={p.id}>
                   <Table.Td>
                     <Text
                       style={{ cursor: 'pointer' }}
@@ -786,6 +715,11 @@ export function AdminDashboard(): JSX.Element {
                     >
                       {displayName || '—'}
                     </Text>
+                    {isSelf && (
+                      <Text c="dimmed" size="xs">
+                        (this is you)
+                      </Text>
+                    )}
                   </Table.Td>
                   <Table.Td>{email ?? '—'}</Table.Td>
                   <Table.Td>
@@ -834,108 +768,12 @@ export function AdminDashboard(): JSX.Element {
                       </Badge>
                     )}
                   </Table.Td>
-                  <Table.Td>
-                    {!membership ? (
-                      <Text c="dimmed" size="sm">
-                        No membership found
-                      </Text>
-                    ) : (
-                      <Button
-                        size="xs"
-                        color={isActive ? 'red' : 'green'}
-                        variant="light"
-                        loading={isBusy}
-                        disabled={Boolean(isSelf)}
-                        onClick={() => requestToggleActive(membership, displayName || email || 'this staff member')}
-                      >
-                        {isActive ? 'Deactivate' : 'Reactivate'}
-                      </Button>
-                    )}
-                    {isSelf && (
-                      <Text c="dimmed" size="xs" mt={4}>
-                        (this is you)
-                      </Text>
-                    )}
-                  </Table.Td>
                 </Table.Tr>
               );
             })}
           </Table.Tbody>
         </Table>
       )}
-
-      {/* Single-row deactivate/reactivate modal */}
-      <Modal
-        opened={pendingToggle !== null}
-        onClose={closeModal}
-        title={
-          <Group gap="xs">
-            <IconAlertTriangle size={20} color="var(--mantine-color-orange-6)" />
-            <Text fw={600}>{isDeactivating ? 'Deactivate' : 'Reactivate'} staff member</Text>
-          </Group>
-        }
-        centered
-      >
-        <Stack>
-          <Text size="sm">
-            {isDeactivating ? (
-              <>
-                <strong>{pendingToggle?.name}</strong> will immediately lose access to this project. Their account
-                and history are kept, and access can be restored at any time.
-              </>
-            ) : (
-              <>
-                <strong>{pendingToggle?.name}</strong> will regain access to this project immediately.
-              </>
-            )}
-          </Text>
-
-          <Select
-            label="Reason"
-            placeholder="Select a reason"
-            data={reasonOptions}
-            value={reason}
-            onChange={setReason}
-            required
-          />
-
-          <Textarea
-            label="Notes (optional)"
-            placeholder="Any additional context for the record"
-            value={notes}
-            onChange={(e) => setNotes(e.currentTarget.value)}
-            minRows={2}
-          />
-
-          {isDeactivating && (
-            <TextInput
-              label={
-                <>
-                  Type <strong>{pendingToggle?.name}</strong> to confirm
-                </>
-              }
-              placeholder={pendingToggle?.name}
-              value={confirmText}
-              onChange={(e) => setConfirmText(e.currentTarget.value)}
-            />
-          )}
-
-          <Group justify="flex-end" mt="sm">
-            <Button variant="subtle" onClick={closeModal}>
-              Cancel
-            </Button>
-            <Button
-              color={isDeactivating ? 'red' : 'green'}
-              disabled={!canConfirm}
-              onClick={() => {
-                confirmToggleActive().catch((err) => console.error('Failed to toggle active state', err));
-              }}
-            >
-              {isDeactivating ? 'Deactivate' : 'Reactivate'}
-            </Button>
-          </Group>
-        </Stack>
-      </Modal>
 
       {/* Bulk role assignment modal */}
       <Modal
