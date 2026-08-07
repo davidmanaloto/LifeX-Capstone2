@@ -3,16 +3,16 @@ import type { JSX } from 'react';
 import { useParams, useNavigate } from 'react-router';
 import { useMedplum } from '@medplum/react';
 import type { Practitioner, PractitionerRole, ProjectMembership, AuditEvent } from '@medplum/fhirtypes';
-import { getReferenceString } from '@medplum/core';
-import { Container, Title, Text, Group, Badge, Button, Card, Stack, Table, Loader, Alert, Divider } from '@mantine/core';
+import { getReferenceString, formatAddress } from '@medplum/core';
+import { Container, Title, Text, Group, Badge, Button, Card, Stack, Table, Loader, Alert, Divider, SimpleGrid } from '@mantine/core';
 import { IconArrowLeft } from '@tabler/icons-react';
 import { useAdminAccess } from '../hooks/useAdminAccess';
+import { useOrganizations } from '../hooks/useOrganizations';
 import { useLocations } from '../hooks/useLocations';
 import { getRoleValues, roleLabel, roleColor, type RoleValue } from '../utils/practitionerRoles';
 import { getAuditEventDetail } from '../utils/auditLog';
 import { EditStaffInfoModal } from '../components/admin/EditStaffInfoModal';
 import { EditRoleModal } from '../components/admin/EditRoleModal';
-import { useOrganizations } from '../hooks/useOrganizations';
 
 const EVENT_LABELS: Record<string, { label: string; color: string }> = {
   'user-status-change': { label: 'Status Changed', color: 'red' },
@@ -21,13 +21,22 @@ const EVENT_LABELS: Record<string, { label: string; color: string }> = {
   'user-info-change': { label: 'Info Updated', color: 'gray' },
 };
 
+function InfoRow({ label, value }: { label: string; value: string | undefined }): JSX.Element {
+  return (
+    <Group justify="space-between" wrap="nowrap">
+      <Text size="sm" c="dimmed">{label}</Text>
+      <Text size="sm" ta="right">{value || '—'}</Text>
+    </Group>
+  );
+}
+
 export function StaffDetailPage(): JSX.Element {
   const { practitionerId } = useParams();
   const navigate = useNavigate();
   const medplum = useMedplum();
   const isAdmin = useAdminAccess();
-  const { locations } = useLocations();
   const { organizations } = useOrganizations();
+  const { locations } = useLocations();
 
   const [practitioner, setPractitioner] = useState<Practitioner | null>(null);
   const [membership, setMembership] = useState<ProjectMembership | null>(null);
@@ -109,13 +118,18 @@ export function StaffDetailPage(): JSX.Element {
     );
   }
 
-  const displayName =
-    `${practitioner.name?.[0]?.given?.join(' ') ?? ''} ${practitioner.name?.[0]?.family ?? ''}`.trim() ||
-    '(unnamed)';
-  const email = practitioner.telecom?.find((t) => t.system === 'email')?.value ?? '—';
-  const phone = practitioner.telecom?.find((t) => t.system === 'phone')?.value ?? '—';
+  const prefix = practitioner.name?.[0]?.prefix?.[0];
+  const givenNames = practitioner.name?.[0]?.given?.join(' ') ?? '';
+  const familyName = practitioner.name?.[0]?.family ?? '';
+  const displayName = `${prefix ? prefix + ' ' : ''}${givenNames} ${familyName}`.trim() || '(unnamed)';
+  const email = practitioner.telecom?.find((t) => t.system === 'email')?.value;
+  const phone = practitioner.telecom?.find((t) => t.system === 'phone')?.value;
+  const address = practitioner.address?.[0] ? formatAddress(practitioner.address[0]) : undefined;
+
   const roleValues: RoleValue[] = getRoleValues(role ?? undefined);
   const isActive = membership?.active !== false;
+  const specialty = role?.specialty?.[0]?.text;
+  const availabilityExceptions = role?.availabilityExceptions;
   const organizationName = organizations.find((o) => `Organization/${o.id}` === role?.organization?.reference)?.name;
   const departmentNames =
     role?.location
@@ -134,56 +148,55 @@ export function StaffDetailPage(): JSX.Element {
         Back to Staff Management
       </Button>
 
-      <Card withBorder padding="lg" mb="lg">
-        <Group justify="space-between" align="flex-start">
-          <Stack gap={4}>
-            <Title order={2}>{displayName}</Title>
-            <Text c="dimmed" size="sm">{email}</Text>
-            <Text c="dimmed" size="sm">{phone}</Text>
+      <Group justify="space-between" align="flex-start" mb="lg">
+        <div>
+          <Title order={2}>{displayName}</Title>
+          <Group gap="xs" mt={6}>
+            {roleValues.length > 0 ? (
+              roleValues.map((rv) => (
+                <Badge key={rv} color={roleColor(rv)} variant="light">{roleLabel(rv)}</Badge>
+              ))
+            ) : (
+              <Badge color="gray" variant="light">No role set</Badge>
+            )}
+            {membership?.admin && <Badge color="grape">Admin</Badge>}
+            {isActive ? (
+              <Badge color="green" variant="light">Active</Badge>
+            ) : (
+              <Badge color="red" variant="light">Inactive</Badge>
+            )}
+          </Group>
+        </div>
+      </Group>
+
+      <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="md" mb="lg">
+        <Card withBorder padding="lg">
+          <Group justify="space-between" mb="sm">
+            <Text fw={600}>Personal Info</Text>
+            <Button size="xs" variant="light" onClick={() => setEditModalOpen(true)}>Edit</Button>
+          </Group>
+          <Stack gap={6}>
+            <InfoRow label="Email" value={email} />
+            <InfoRow label="Phone" value={phone} />
+            <InfoRow label="Address" value={address} />
           </Stack>
-          <Group gap="xs">
-            <Button size="xs" variant="light" onClick={() => setEditModalOpen(true)}>
-              Edit Info
-            </Button>
-            <Button size="xs" variant="light" onClick={() => setEditRoleModalOpen(true)}>
-              Edit Role
-            </Button>
+        </Card>
+
+        <Card withBorder padding="lg">
+          <Group justify="space-between" mb="sm">
+            <Text fw={600}>Employment</Text>
+            <Button size="xs" variant="light" onClick={() => setEditRoleModalOpen(true)}>Edit Role</Button>
           </Group>
-        </Group>
+          <Stack gap={6}>
+            <InfoRow label="Organization" value={organizationName} />
+            <InfoRow label="Department(s)" value={departmentNames.length > 0 ? departmentNames.join(', ') : undefined} />
+            <InfoRow label="Specialty" value={specialty} />
+            <InfoRow label="Availability exceptions" value={availabilityExceptions} />
+          </Stack>
+        </Card>
+      </SimpleGrid>
 
-        <Divider my="md" />
-
-        <Group gap="xs" mb="xs">
-          {roleValues.length > 0 ? (
-            roleValues.map((rv) => (
-              <Badge key={rv} color={roleColor(rv)} variant="light">
-                {roleLabel(rv)}
-              </Badge>
-            ))
-          ) : (
-            <Badge color="gray" variant="light">No role set</Badge>
-          )}
-          {membership?.admin && <Badge color="grape">Admin</Badge>}
-          {isActive ? (
-            <Badge color="green" variant="light">Active</Badge>
-          ) : (
-            <Badge color="red" variant="light">Inactive</Badge>
-          )}
-        </Group>
-
-        {organizationName && (
-          <Text size="sm" c="dimmed" mt="xs">Organization: {organizationName}</Text>
-        )}
-
-        {departmentNames.length > 0 && (
-          <Group gap="xs">
-            <Text size="sm" c="dimmed">Department(s):</Text>
-            {departmentNames.map((n) => (
-              <Badge key={n} color="cyan" variant="light">{n}</Badge>
-            ))}
-          </Group>
-        )}
-      </Card>
+      <Divider mb="lg" />
 
       <Title order={4} mb="sm">History</Title>
 

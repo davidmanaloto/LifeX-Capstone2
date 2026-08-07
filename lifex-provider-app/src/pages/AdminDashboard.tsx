@@ -539,7 +539,7 @@ export function AdminDashboard(): JSX.Element {
             </Card>
           </SimpleGrid>
           <Text fw={600} size="sm" c="dimmed" mt="xs">Hospital Overview</Text>
-            <SimpleGrid cols={{ base: 2, sm: 3 }} spacing="md">
+            <SimpleGrid cols={{ base: 2, sm: 4 }} spacing="md">
               <Card
                 withBorder
                 padding="md"
@@ -569,6 +569,11 @@ export function AdminDashboard(): JSX.Element {
                 <Text size="xs" c="dimmed">Appointments Today</Text>
                 <Text size="xl" fw={700}>{hospitalSummary.todaysAppointments}</Text>
                 <Text size="xs" c="dimmed">{hospitalSummary.totalAppointments} total on record</Text>
+              </Card>
+              <Card withBorder padding="md" style={{ cursor: 'pointer' }} onClick={() => navigate('/admin/ghost-accounts')}>
+                <Text size="xs" c="dimmed">Ghost Accounts</Text>
+                <Text size="xl" fw={700} c="orange">{summary.noRoleStaff.length}</Text>
+                <Text size="xs" c="dimmed">need attention</Text>
               </Card>
             </SimpleGrid>
 

@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import type { JSX } from 'react';
 import { useMedplum, ResourceForm } from '@medplum/react';
 import { useNavigate } from 'react-router';
-import type { CodeableConcept, PractitionerRole, ProjectMembership } from '@medplum/fhirtypes';
+import type { PractitionerRole, ProjectMembership } from '@medplum/fhirtypes';
 import {
   Container,
   Title,
@@ -13,56 +13,76 @@ import {
   Stack,
   Alert,
   Group,
+  Badge,
   Select,
   MultiSelect,
   Textarea,
   Card,
   List,
+  Stepper,
+  Modal,
 } from '@mantine/core';
+import { IconCheck } from '@tabler/icons-react';
 import { useAdminAccess } from '../../hooks/useAdminAccess';
 import { useOrganizations } from '../../hooks/useOrganizations';
 import { useLocations } from '../../hooks/useLocations';
-import { createLocationAssignmentAuditEvent } from '../../utils/auditLog';
-import { ROLE_OPTIONS, ROLES_WITH_SPECIALTY, buildRoleCodes, roleLabel, type RoleValue } from '../../utils/practitionerRoles';
+import { ROLE_OPTIONS, buildRoleCodes, getRoleValues, roleLabel, type RoleValue } from '../../utils/practitionerRoles';
 import { resolveAccessPolicyForRoles, resolveHospitalAdminAccessPolicy } from '../../utils/accessPolicies';
 import { createRoleChangeAuditEvent } from '../../utils/auditLog';
 
-type Step = 'user' | 'role' | 'details' | 'review';
+type Step = 'account' | 'role' | 'details' | 'done';
+
+const STEP_INDEX: Record<Step, number> = { account: 0, role: 1, details: 2, done: 3 };
+
+const DAY_LABELS: Record<string, string> = {
+  mon: 'Mon',
+  tue: 'Tue',
+  wed: 'Wed',
+  thu: 'Thu',
+  fri: 'Fri',
+  sat: 'Sat',
+  sun: 'Sun',
+};
 
 export function NewUserPage(): JSX.Element {
   const medplum = useMedplum();
   const navigate = useNavigate();
   const isAdmin = useAdminAccess();
   const { organizations, loading: orgsLoading } = useOrganizations();
+  const { locations } = useLocations();
 
-  const [step, setStep] = useState<Step>('user');
+  const [step, setStep] = useState<Step>('account');
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
-  // Step 1: user details (collected only, not submitted yet)
+  // Step 1: account details
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
   const [email, setEmail] = useState('');
   const [makeAdmin, setMakeAdmin] = useState(false);
+  const [confirmAccountModalOpen, setConfirmAccountModalOpen] = useState(false);
 
-  // Step 2: role details (collected, then used to submit invite + role together)
+  // Step 2: role/department details
   const [selectedOrgId, setSelectedOrgId] = useState<string | null>(null);
   const [selectedRoles, setSelectedRoles] = useState<RoleValue[]>(['doctor']);
-  const [specialtyText, setSpecialtyText] = useState('');
-  const [availabilityExceptions, setAvailabilityExceptions] = useState('');
-  const showSpecialtyField = selectedRoles.some((r) => ROLES_WITH_SPECIALTY.has(r));
-  const { locations } = useLocations();
   const [selectedLocationIds, setSelectedLocationIds] = useState<string[]>([]);
+  const [availabilityExceptions, setAvailabilityExceptions] = useState('');
+  const [confirmRoleModalOpen, setConfirmRoleModalOpen] = useState(false);
 
-  // Set after the invite + PractitionerRole are actually created
+  // Set after each real commit
   const [practitionerRef, setPractitionerRef] = useState<string | null>(null);
   const [createdName, setCreatedName] = useState('');
   const [practitionerRole, setPractitionerRole] = useState<PractitionerRole | null>(null);
 
   useEffect(() => {
+    if (organizations.length > 0 && !selectedOrgId) {
+      setSelectedOrgId(organizations[0].id ?? null);
+    }
+  }, [organizations, selectedOrgId]);
+
+  useEffect(() => {
     if (makeAdmin) {
       setSelectedRoles([]);
-      setSpecialtyText('');
     } else if (selectedRoles.length === 0) {
       setSelectedRoles(['doctor']);
     }
@@ -93,32 +113,29 @@ export function NewUserPage(): JSX.Element {
     );
   }
 
-  // Step 1 → Step 2: just validates and advances, no API call yet.
-  function handleContinueFromUser(): void {
+  // --- Step 1: create the account ---
+
+  function requestCreateAccount(): void {
     setError(null);
     if (!firstName.trim() || !lastName.trim() || !email.trim()) {
       setError('First name, last name, and email are all required.');
       return;
     }
-    setStep('role');
+    setConfirmAccountModalOpen(true);
   }
 
-  // Step 2 → Step 3: THIS is where the actual invite + AccessPolicy + PractitionerRole
-  // all happen together, now that we know both the admin flag AND the selected roles.
-  async function handleContinueFromRole(): Promise<void> {
+  async function confirmCreateAccount(): Promise<void> {
     const project = medplum.getProject();
     if (!project?.id) {
       setError('Could not determine the current project.');
+      setConfirmAccountModalOpen(false);
       return;
     }
 
+    setConfirmAccountModalOpen(false);
     setError(null);
     setSubmitting(true);
     try {
-      const accessPolicy = makeAdmin
-        ? await resolveHospitalAdminAccessPolicy(medplum)
-        : await resolveAccessPolicyForRoles(medplum, selectedRoles);
-
       const membership = (await medplum.post(`admin/projects/${project.id}/invite`, {
         resourceType: 'Practitioner',
         firstName: firstName.trim(),
@@ -126,10 +143,7 @@ export function NewUserPage(): JSX.Element {
         email: email.trim(),
         sendEmail: false,
         scope: 'project',
-        membership: {
-          admin: makeAdmin || undefined,
-          accessPolicy,
-        },
+        membership: { admin: makeAdmin || undefined },
       })) as ProjectMembership;
 
       const ref = membership.profile?.reference ?? null;
@@ -141,63 +155,130 @@ export function NewUserPage(): JSX.Element {
 
       setPractitionerRef(ref);
       setCreatedName(`${firstName.trim()} ${lastName.trim()}`);
-
-      const org = organizations.find((o) => o.id === selectedOrgId) ?? organizations[0];
-      const specialty: CodeableConcept[] | undefined =
-        showSpecialtyField && specialtyText.trim() ? [{ text: specialtyText.trim() }] : undefined;
-
-      const createdRole = await medplum.createResource<PractitionerRole>({
-        resourceType: 'PractitionerRole',
-        active: true,
-        practitioner: { reference: ref },
-        organization: org?.id ? { reference: `Organization/${org.id}`, display: org.name } : undefined,
-        location: selectedLocationIds.length > 0
-          ? selectedLocationIds.map((id) => ({ reference: `Location/${id}` }))
-          : undefined,
-        code: selectedRoles.length > 0 ? buildRoleCodes(selectedRoles) : undefined,
-        specialty,
-        availabilityExceptions: availabilityExceptions.trim() || undefined,
-      });
-
-      if (selectedLocationIds.length > 0) {
-        const locationNames = locations.filter((l) => selectedLocationIds.includes(l.id ?? '')).map((l) => l.name ?? '');
-        try {
-          await createLocationAssignmentAuditEvent(medplum, ref, `${firstName.trim()} ${lastName.trim()}`, [], locationNames);
-        } catch (err) {
-          console.error('Failed to record department-assignment audit event', err);
-        }
-      }
-
-      setPractitionerRole(createdRole);
-      if (selectedRoles.length > 0) {
-        try {
-          await createRoleChangeAuditEvent(medplum, ref, `${firstName.trim()} ${lastName.trim()}`, [], selectedRoles);
-        } catch (err) {
-          console.error('Failed to record role-assignment audit event', err);
-        }
-      }
-      setStep(makeAdmin ? 'review' : 'details');
+      setStep('role');
     } catch (err) {
-      console.error('Failed to create user and role', err);
-      setError('Failed to create user. Check console for details.');
+      console.error('Failed to create user account', err);
+      setError('Failed to create the account. The email may already be in use, or check the console for details.');
     } finally {
       setSubmitting(false);
     }
   }
 
+  // --- Step 2: assign role & access ---
+
+  function requestAssignRole(): void {
+    setError(null);
+    setConfirmRoleModalOpen(true);
+  }
+
+  async function confirmAssignRole(): Promise<void> {
+    if (!practitionerRef) {
+      setConfirmRoleModalOpen(false);
+      return;
+    }
+
+    setConfirmRoleModalOpen(false);
+    setError(null);
+    setSubmitting(true);
+    try {
+      const accessPolicy = makeAdmin
+        ? await resolveHospitalAdminAccessPolicy(medplum)
+        : await resolveAccessPolicyForRoles(medplum, selectedRoles);
+
+      const project = medplum.getProject();
+      // Find and patch the membership we just created, if we can resolve it —
+      // otherwise skip; the account still exists and can be fixed from Staff Management.
+      const memberships = await medplum.searchResources('ProjectMembership', {
+        profile: practitionerRef,
+        _count: 1,
+      });
+      const createdMembership = memberships[0];
+      if (createdMembership?.id && project?.id && accessPolicy) {
+        await medplum.patchResource('ProjectMembership', createdMembership.id, [
+          { op: 'add', path: '/accessPolicy', value: accessPolicy },
+        ]);
+      }
+
+      const org = organizations.find((o) => o.id === selectedOrgId) ?? organizations[0];
+      const locationRefs =
+        selectedLocationIds.length > 0
+          ? selectedLocationIds.map((id) => ({ reference: `Location/${id}` }))
+          : undefined;
+
+      const createdRole = await medplum.createResource<PractitionerRole>({
+        resourceType: 'PractitionerRole',
+        active: true,
+        practitioner: { reference: practitionerRef },
+        organization: org?.id ? { reference: `Organization/${org.id}`, display: org.name } : undefined,
+        location: locationRefs,
+        code: selectedRoles.length > 0 ? buildRoleCodes(selectedRoles) : undefined,
+        availabilityExceptions: availabilityExceptions.trim() || undefined,
+      });
+
+      try {
+        await createRoleChangeAuditEvent(medplum, practitionerRef, createdName, [], selectedRoles);
+      } catch (err) {
+        console.error('Failed to record role-assignment audit event', err);
+      }
+
+      setPractitionerRole(createdRole);
+      setStep('details');
+    } catch (err) {
+      console.error('Failed to assign role', err);
+      setError('Failed to assign role. The account was created — you can fix this from Staff Management.');
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  function finishWithoutExtras(): void {
+    setStep('done');
+  }
+
+  const stepperIndex = STEP_INDEX[step];
+
+  // Derived for the "done" summary — read straight off the saved PractitionerRole
+  // rather than shadow form state, so what's shown matches what's actually persisted
+  // (including anything changed via the advanced ResourceForm editor in step 3).
+  const roleValuesOnRole = practitionerRole ? getRoleValues(practitionerRole) : [];
+  const departmentNames =
+    practitionerRole?.location
+      ?.map((ref) => locations.find((l) => `Location/${l.id}` === ref.reference)?.name)
+      .filter((n): n is string => Boolean(n)) ?? [];
+  const workContactSummary = practitionerRole?.telecom
+    ?.map((t) => `${t.system === 'fax' ? 'Fax' : 'Phone'}: ${t.value}`)
+    .join(' · ');
+  const identifierSummary = practitionerRole?.identifier
+    ?.map((i) => i.value)
+    .filter((v): v is string => Boolean(v))
+    .join(', ');
+  const availabilitySummary = (() => {
+    const at = practitionerRole?.availableTime?.[0];
+    if (!at?.daysOfWeek?.length || !at.availableStartTime || !at.availableEndTime) return null;
+    const days = at.daysOfWeek.map((d) => DAY_LABELS[d] ?? d).join(', ');
+    return `${days}, ${at.availableStartTime.slice(0, 5)}–${at.availableEndTime.slice(0, 5)}`;
+  })();
+
   return (
     <Container size="md" my="lg">
-      <Text size="sm" c="dimmed" mb={4}>
-        {step === 'user' && 'Step 1 of 4 — User details'}
-        {step === 'role' && 'Step 2 of 4 — Role & assignment'}
-        {step === 'details' && 'Step 3 of 4 — Additional details (optional)'}
-        {step === 'review' && 'Step 4 of 4 — Review & confirm'}
-      </Text>
-      <Title order={2} mb="lg">New user</Title>
+      <Title order={2} mb="md">New user</Title>
+
+      <Stepper active={stepperIndex} mb="lg" size="sm">
+        <Stepper.Step label="Create Account" description="Name & email" />
+        <Stepper.Step label="Assign Role" description="Role, department & access" />
+        <Stepper.Step label="Additional Details" description="Optional" />
+        <Stepper.Step label="Done" />
+      </Stepper>
 
       {error && <Alert color="red" title="Error" mb="md">{error}</Alert>}
 
-      {step === 'user' && (
+      {stepperIndex >= 1 && (
+        <Alert color="green" icon={<IconCheck size={16} />} mb="md">
+          Account created for <strong>{createdName}</strong>.
+        </Alert>
+      )}
+
+      {step === 'account' && (
         <Stack>
           <TextInput label="First name" placeholder="Jane" value={firstName} onChange={(e) => setFirstName(e.currentTarget.value)} required />
           <TextInput label="Last name" placeholder="Doe" value={lastName} onChange={(e) => setLastName(e.currentTarget.value)} required />
@@ -205,14 +286,14 @@ export function NewUserPage(): JSX.Element {
           <Checkbox label="Also make this user a project admin" checked={makeAdmin} onChange={(e) => setMakeAdmin(e.currentTarget.checked)} />
           <Group justify="space-between" mt="md">
             <Button variant="subtle" onClick={() => navigate('/admin')}>Cancel</Button>
-            <Button onClick={handleContinueFromUser}>Continue</Button>
+            <Button onClick={requestCreateAccount} loading={submitting}>Create Account</Button>
           </Group>
         </Stack>
       )}
 
       {step === 'role' && (
         <Stack gap="md">
-          <Text size="sm">Set up {firstName} {lastName}'s role and organization.</Text>
+          <Text size="sm">Assign {createdName}'s role, organization, and department.</Text>
 
           <Select
             label="Organization"
@@ -220,20 +301,6 @@ export function NewUserPage(): JSX.Element {
             value={selectedOrgId}
             onChange={setSelectedOrgId}
           />
-
-          {locations.length > 0 && (
-            <Card withBorder padding="sm">
-              <Text fw={600} size="sm" mb="xs">Department / Unit (optional)</Text>
-              <MultiSelect
-                placeholder="Select one or more"
-                data={locations
-                  .filter((l) => l.managingOrganization?.reference === `Organization/${selectedOrgId}`)
-                  .map((l) => ({ value: l.id ?? '', label: l.name ?? 'Unnamed' }))}
-                value={selectedLocationIds}
-                onChange={setSelectedLocationIds}
-              />
-            </Card>
-          )}
 
           <Card withBorder padding="sm">
             <Text fw={600} size="sm" mb="xs">Role</Text>
@@ -252,8 +319,18 @@ export function NewUserPage(): JSX.Element {
             )}
           </Card>
 
-          {showSpecialtyField && (
-            <TextInput label="Specialty" placeholder="e.g. Cardiology" value={specialtyText} onChange={(e) => setSpecialtyText(e.currentTarget.value)} />
+          {locations.length > 0 && (
+            <Card withBorder padding="sm">
+              <Text fw={600} size="sm" mb="xs">Department / Unit (optional)</Text>
+              <MultiSelect
+                placeholder="Select one or more"
+                data={locations
+                  .filter((l) => l.managingOrganization?.reference === `Organization/${selectedOrgId}`)
+                  .map((l) => ({ value: l.id ?? '', label: l.name ?? 'Unnamed' }))}
+                value={selectedLocationIds}
+                onChange={setSelectedLocationIds}
+              />
+            </Card>
           )}
 
           <Textarea
@@ -263,11 +340,8 @@ export function NewUserPage(): JSX.Element {
             onChange={(e) => setAvailabilityExceptions(e.currentTarget.value)}
           />
 
-          <Group justify="space-between" mt="md">
-            <Button variant="subtle" onClick={() => setStep('user')}>Back</Button>
-            <Button onClick={() => { handleContinueFromRole().catch((err) => console.error(err)); }} loading={submitting}>
-              Create User
-            </Button>
+          <Group justify="flex-end" mt="md">
+            <Button onClick={requestAssignRole} loading={submitting}>Assign Role & Access</Button>
           </Group>
         </Stack>
       )}
@@ -282,21 +356,24 @@ export function NewUserPage(): JSX.Element {
             defaultValue={practitionerRole}
             onSubmit={(updated) => {
               setPractitionerRole(updated as PractitionerRole);
-              setStep('review');
+              setStep('done');
             }}
           />
 
           <Group justify="flex-end">
-            <Button variant="subtle" onClick={() => setStep('review')}>
-              Skip for now
+            <Button variant="subtle" onClick={finishWithoutExtras}>
+              Finish (no additional details)
             </Button>
           </Group>
         </Stack>
       )}
 
-      {step === 'review' && (
+      {step === 'done' && (
         <Stack gap="md">
-          <Text size="sm" c="dimmed">Please review before returning to Staff Management.</Text>
+          <Alert color="green" icon={<IconCheck size={16} />} title="Setup complete">
+            {createdName} has been created with the role(s) and access assigned. Review the details below —
+            anything that needs adjusting can be fixed from Staff Management.
+          </Alert>
 
           <Card withBorder padding="md">
             <List spacing="xs" size="sm">
@@ -305,34 +382,76 @@ export function NewUserPage(): JSX.Element {
               <List.Item><strong>Admin access:</strong> {makeAdmin ? 'Yes' : 'No'}</List.Item>
               <List.Item>
                 <strong>Organization:</strong>{' '}
-                {organizations.find((o) => o.id === selectedOrgId)?.name ?? '—'}
+                {organizations.find((o) => `Organization/${o.id}` === practitionerRole?.organization?.reference)?.name ?? '—'}
               </List.Item>
               <List.Item>
                 <strong>Role(s):</strong>{' '}
                 {makeAdmin
                   ? 'Hospital Admin (full access policy — no clinical role)'
-                  : selectedRoles.length > 0
-                    ? selectedRoles.map(roleLabel).join(', ')
+                  : roleValuesOnRole.length > 0
+                    ? roleValuesOnRole.map(roleLabel).join(', ')
                     : 'None set'}
               </List.Item>
-              {selectedLocationIds.length > 0 && (
-              <List.Item>
-                <strong>Department(s):</strong>{' '}
-                {locations.filter((l) => selectedLocationIds.includes(l.id ?? '')).map((l) => l.name).join(', ')}
-              </List.Item>
-            )}
-              {!makeAdmin && specialtyText && <List.Item><strong>Specialty:</strong> {specialtyText}</List.Item>}
-              {availabilityExceptions && (
-                <List.Item><strong>Availability exceptions:</strong> {availabilityExceptions}</List.Item>
+              {departmentNames.length > 0 && (
+                <List.Item><strong>Department(s):</strong> {departmentNames.join(', ')}</List.Item>
               )}
+              {workContactSummary && <List.Item><strong>Telecom (from role):</strong> {workContactSummary}</List.Item>}
+              {identifierSummary && <List.Item><strong>Identifier(s):</strong> {identifierSummary}</List.Item>}
+              {availabilitySummary && (
+                <List.Item><strong>Weekly availability:</strong> {availabilitySummary}</List.Item>
+              )}
+              {practitionerRole?.availabilityExceptions && (
+                <List.Item><strong>Availability exceptions:</strong> {practitionerRole.availabilityExceptions}</List.Item>
+              )}
+              <List.Item>
+                <strong>Status:</strong>{' '}
+                <Badge color={practitionerRole?.active === false ? 'red' : 'green'} variant="light" size="sm">
+                  {practitionerRole?.active === false ? 'Inactive' : 'Active'}
+                </Badge>
+              </List.Item>
             </List>
           </Card>
 
           <Group justify="flex-end" mt="md">
-            <Button onClick={() => navigate('/admin')}>Confirm & Return to Staff Management</Button>
+            <Button onClick={() => navigate('/admin')}>Return to Staff Management</Button>
           </Group>
         </Stack>
       )}
+
+      {/* Confirm account creation */}
+      <Modal opened={confirmAccountModalOpen} onClose={() => setConfirmAccountModalOpen(false)} title="Create account?" centered>
+        <Stack>
+          <Text size="sm">
+            This creates a login for <strong>{firstName} {lastName}</strong> ({email}). They won't have any system
+            access until you assign a role in the next step.
+          </Text>
+          <Group justify="flex-end" mt="sm">
+            <Button variant="subtle" onClick={() => setConfirmAccountModalOpen(false)}>Cancel</Button>
+            <Button onClick={() => { confirmCreateAccount().catch((err) => console.error(err)); }}>
+              Create Account
+            </Button>
+          </Group>
+        </Stack>
+      </Modal>
+
+      {/* Confirm role assignment */}
+      <Modal opened={confirmRoleModalOpen} onClose={() => setConfirmRoleModalOpen(false)} title="Assign role & access?" centered>
+        <Stack>
+          <Text size="sm">
+            This assigns{' '}
+            <strong>
+              {makeAdmin ? 'Hospital Admin' : selectedRoles.length > 0 ? selectedRoles.map(roleLabel).join(', ') : 'no role'}
+            </strong>{' '}
+            to <strong>{createdName}</strong> and determines what they can access in the system.
+          </Text>
+          <Group justify="flex-end" mt="sm">
+            <Button variant="subtle" onClick={() => setConfirmRoleModalOpen(false)}>Cancel</Button>
+            <Button onClick={() => { confirmAssignRole().catch((err) => console.error(err)); }}>
+              Assign Role & Access
+            </Button>
+          </Group>
+        </Stack>
+      </Modal>
     </Container>
   );
 }

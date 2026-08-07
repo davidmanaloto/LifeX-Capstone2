@@ -10,6 +10,7 @@ import {
   IconCalendarEvent,
   IconClipboardCheck,
   IconMail,
+  IconGhost,
   IconMapPin,
   IconPill,
   IconPrinter,
@@ -33,6 +34,7 @@ import './index.css';
 const SETUP_DISMISSED_KEY = 'medplum-provider-setup-completed';
 const PROVIDER_HIDE_GET_STARTED_SETTING = 'hideGetStarted';
 
+import { GhostAccountsPage } from './pages/GhostAccountsPage';
 import { AppointmentOversightPage } from './pages/AppointmentOversightPage';
 import { LocationDashboard } from './pages/LocationDashboard';
 import { OrganizationDashboard } from './pages/OrganizationDashboard';
@@ -126,6 +128,7 @@ export function App(): JSX.Element | null {
                     : []),
                   { icon: <IconMapPin />, label: 'Locations', href: '/admin/locations' },
                   { icon: <IconCalendarEvent />, label: 'Appointments', href: '/admin/appointments' },
+                  { icon: <IconGhost />, label: 'Ghost Accounts', href: '/admin/ghost-accounts' },
                   {
                     icon: <IconMail />,
                     label: 'Messages',
@@ -228,6 +231,7 @@ export function App(): JSX.Element | null {
               <Route path="/admin/appointments" element={<AppointmentOversightPage />} />
               <Route path="/admin/organizations" element={<OrganizationDashboard />} />
               <Route path="/admin/staff/:practitionerId" element={<StaffDetailPage />} />
+              <Route path="/admin/ghost-accounts" element={<GhostAccountsPage />} />
               <Route path="/Spaces/Communication" element={<SpacesPage />}>
                 <Route index element={<SpacesPage />} />
                 <Route path=":topicId" element={<SpacesPage />} />
